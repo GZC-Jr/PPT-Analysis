@@ -1,0 +1,9 @@
+
+PyQt6
+pandas
+matplotlib
+python-pptx
+# 对于PPT转图片功能，可能需要以下依赖，安装过程可能因系统而异
+# pptx2pdf
+# pdf2image
+# poppler (这是一个外部程序，不是pip包, pdf2image需要它)
