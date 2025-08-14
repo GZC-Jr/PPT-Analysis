@@ -231,22 +231,26 @@ class MainWindow(QMainWindow):
         self.chart_controls.generate_chart_signal.connect(self.generate_chart)
         self.chart_controls.export_chart_button.clicked.connect(self.export_chart)
 
-        # --- 新增：演示播放功能信号连接 ---
-        # 从控制器 -> 播放器
+        # --- 演示播放功能信号连接 (重构版) ---
         pc = self.presentation_controls
         pv = self.presentation_view
 
+        # 基础播放控制
         pc.play_toggled.connect(pv.toggle_playback)
         pc.progress_scrubbed.connect(pv.scrub_to_position)
         pc.playback_mode_changed.connect(pv.set_playback_mode)
         pc.speed_changed.connect(pv.set_speed)
         pc.interval_changed.connect(pv.set_interval)
         pc.jump_to_slide_requested.connect(pv.jump_to_slide)
-        pc.draw_settings_changed.connect(pv.set_draw_settings)
+
+        # --- 新的绘图设置连接 ---
+        pc.draw_visibility_changed.connect(pv.update_visibility)
+        pc.trajectory_props_changed.connect(pv.update_trajectory_props)
+        pc.marker_props_changed.connect(pv.update_marker_props)
+        # pc.tail_props_changed.connect(pv.update_tail_props) # 如果需要单独设置尾迹属性
 
         # 从播放器 -> 控制器 (反馈)
         pv.progress_updated.connect(pc.update_progress)
-        # 当播放完成时，让播放按钮恢复到“播放”状态
         pv.playback_finished.connect(lambda: pc.play_button.setChecked(False))
 
     def on_ppt_loaded(self, slide_paths):
