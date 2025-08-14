@@ -1,3 +1,4 @@
+# core/data_model.py
 
 import pandas as pd
 from PyQt6.QtCore import QObject, pyqtSignal
@@ -7,60 +8,71 @@ import os
 
 
 class DataModel(QObject):
-    """
-    负责管理和处理所有数据（PPT和CSV）的类。
-    当数据加载或更改时，它会发出信号，通知UI进行更新。
-    """
-    # 定义信号
     data_loaded = pyqtSignal()
-    ppt_loaded = pyqtSignal(list)  # 传递幻灯片图像路径列表
+    ppt_loaded = pyqtSignal(list)
     log_message = pyqtSignal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.df = None
+        self.df = pd.DataFrame()  # 当前正在编辑的DataFrame
+        self.original_df = pd.DataFrame()  # 首次加载时的原始副本，用于还原
         self.presentation = None
         self.slide_images = []
         self.ppt_path = None
         self.csv_path = None
 
     def load_csv(self, file_path):
-        """加载并解析CSV文件"""
+        """加载并解析CSV文件，同时保存一份原始副本"""
         try:
-            self.df = pd.read_csv(
+            temp_df = pd.read_csv(
                 file_path,
-                sep=',',  # 根据描述，格式为制表符分隔
+                encoding='utf-8-sig',
+                sep=None,
+                engine='python',
                 parse_dates=['Timestamp']
             )
+            # 排序后，同时设置当前和原始DataFrame
+            self.df = temp_df.sort_values(by='Timestamp').reset_index(drop=True)
+            self.original_df = self.df.copy()  # 创建深拷贝作为原始备份
+
             self.csv_path = file_path
-            # 数据清洗和预处理可以在这里添加
-            self.df = self.df.sort_values(by='Timestamp').reset_index(drop=True)
             self.log_message.emit(f"成功加载并解析CSV文件: {os.path.basename(file_path)}")
             self.data_loaded.emit()
         except Exception as e:
             self.log_message.emit(f"错误：加载CSV文件失败: {e}")
-            self.df = None
+            self.df = pd.DataFrame()
+            self.original_df = pd.DataFrame()
+
+    def restore_to_original(self):
+        """将当前DataFrame还原到最初加载的状态"""
+        if not self.original_df.empty:
+            self.df = self.original_df.copy()
+            self.log_message.emit("表格数据已成功还原到初始状态。")
+            self.data_loaded.emit()  # 发送信号以刷新UI
+        else:
+            self.log_message.emit("没有可供还原的原始数据。")
+
+    def apply_changes(self, current_df):
+        """应用更改，将当前状态设为新的“原始”状态"""
+        self.df = current_df.copy()
+        self.original_df = current_df.copy()  # 新的基准
+        self.log_message.emit("所有更改已应用并保存为新基准。")
+        self.data_loaded.emit()  # 刷新UI
 
     def load_ppt(self, file_path, temp_dir="temp_slides"):
-        """加载PPT并提取幻灯片为图片"""
+        # ... (此方法保持不变) ...
         try:
             self.presentation = Presentation(file_path)
             self.ppt_path = file_path
             self.log_message.emit(f"正在从 {os.path.basename(file_path)} 提取幻灯片...")
-
-            # 创建临时目录存放幻灯片图片
             if not os.path.exists(temp_dir):
                 os.makedirs(temp_dir)
-
-            # 调用工具函数提取图片
             self.slide_images = extract_slides_as_images(file_path, temp_dir)
-
             if self.slide_images:
                 self.log_message.emit(f"成功提取 {len(self.slide_images)} 张幻灯片。")
                 self.ppt_loaded.emit(self.slide_images)
             else:
                 self.log_message.emit("警告：未能从PPT中提取任何幻灯片。演示功能将受限。")
-
         except Exception as e:
             self.log_message.emit(f"错误：加载PPT文件失败: {e}")
             self.presentation = None
@@ -68,19 +80,3 @@ class DataModel(QObject):
 
     def get_dataframe(self):
         return self.df
-
-    def update_dataframe(self, new_df):
-        """应用表格中的修改"""
-        self.df = new_df
-        self.log_message.emit("表格数据已更新。")
-        self.data_loaded.emit()  # 发出信号以更新所有视图
-
-    def save_dataframe_to_csv(self, file_path):
-        """将当前DataFrame保存为CSV"""
-        if self.df is not None:
-            try:
-                self.df.to_csv(file_path, index=False, sep='\t')
-                self.log_message.emit(f"表格已成功导出到: {file_path}")
-            except Exception as e:
-                self.log_message.emit(f"错误：导出CSV失败: {e}")
-

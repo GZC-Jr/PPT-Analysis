@@ -1,8 +1,8 @@
 import os
 from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                              QStackedWidget, QSplitter, QFileDialog, QToolBar,
-                             QMessageBox)
-from PyQt6.QtGui import QIcon, QAction, QActionGroup
+                             QMessageBox, QColorDialog)
+from PyQt6.QtGui import QIcon, QAction, QActionGroup, QColor
 from PyQt6.QtCore import Qt, pyqtSignal, QSize
 
 from core.data_model import DataModel
@@ -207,9 +207,24 @@ class MainWindow(QMainWindow):
         # 底部面板切换
         self.bottom_action_group.triggered.connect(self.on_bottom_panel_changed)
 
-        # 表格控制信号
-        self.table_controls.export_table_button.clicked.connect(self.export_table)
-        self.table_controls.apply_button.clicked.connect(self.apply_table_changes)
+        # # 表格控制信号
+        # self.table_controls.export_table_button.clicked.connect(self.export_table)
+        # self.table_controls.apply_button.clicked.connect(self.apply_table_changes)
+        # --- 表格控制信号 (重构版) ---
+        tc = self.table_controls
+        # 查找/替换
+        tc.find_next_button.clicked.connect(self.find_next_in_table)
+        # tc.find_prev_button.clicked.connect(lambda: self.find_in_table(backward=True))
+        tc.replace_current_button.clicked.connect(self.replace_current_in_table)
+        tc.replace_all_button.clicked.connect(self.replace_all_in_table)
+
+        # 样式
+        tc.color_button.clicked.connect(self.set_table_font_color)
+
+        # 操作
+        tc.restore_button.clicked.connect(self.restore_table)
+        tc.apply_button.clicked.connect(self.apply_table_changes)
+        tc.export_table_button.clicked.connect(self.export_table)
 
         # 图表控制信号
         self.chart_controls.generate_chart_signal.connect(self.generate_chart)
@@ -239,18 +254,16 @@ class MainWindow(QMainWindow):
     def on_data_loaded(self):
         """当CSV数据加载或更新时调用"""
         df = self.data_model.get_dataframe()
+        # --- 使用新的restore_data方法来刷新 ---
+        self.table_view.restore_data(df)
+
         if df is not None and not df.empty:
-            self.table_view.set_data(df)
             self.chart_controls.update_variable_options(list(df.columns))
-            # 更新演示视图的数据
             self.presentation_view.set_mouse_data(df)
-            # 设置演示控制器的进度条范围
             self.presentation_controls.set_progress_range(len(df) - 1)
-            self.log_console.add_log("表格和演示视图已使用新数据更新。")
+            self.log_console.add_log("表格和图表视图已使用新数据更新。")
         else:
-            # 如果加载了空数据，重置
             self.presentation_controls.reset_controls()
-            self.log_console.add_log("加载的数据为空或无效。")
 
     def on_bottom_panel_changed(self, action):
         """切换日志和终端视图"""
@@ -268,6 +281,45 @@ class MainWindow(QMainWindow):
         file_path, _ = QFileDialog.getOpenFileName(self, "选择CSV数据文件", "", "CSV Files (*.csv)")
         if file_path:
             self.data_model.load_csv(file_path)
+
+        # --- 新增或修改的槽函数 ---
+
+    def find_next_in_table(self):
+        find_text = self.table_controls.find_edit.text()
+        self.table_view.find_in_table(find_text)
+
+    def replace_current_in_table(self):
+        replace_text = self.table_controls.replace_with_edit.text()
+        self.table_view.replace_current(replace_text)
+
+    def replace_all_in_table(self):
+        find_text = self.table_controls.find_edit.text()
+        replace_text = self.table_controls.replace_with_edit.text()
+        if not find_text:
+            QMessageBox.warning(self, "输入为空", "请输入要查找的内容。")
+            return
+
+        reply = QMessageBox.question(self, "全部替换",
+                                     f"您确定要将所有 '{find_text}' 替换为 '{replace_text}' 吗？\n此操作不可撤销。",
+                                     QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                                     QMessageBox.StandardButton.No)
+        if reply == QMessageBox.StandardButton.Yes:
+            self.table_view.replace_all(find_text, replace_text)
+            self.data_model.log_message.emit("“全部替换”操作已完成。")
+
+    def set_table_font_color(self):
+        color = QColorDialog.getColor(initial=QColor("red"), parent=self)
+        if color.isValid():
+            self.table_view.apply_color_to_selection(color)
+            self.data_model.log_message.emit(f"已将选中项颜色设置为 {color.name()}。")
+
+    def restore_table(self):
+        reply = QMessageBox.question(self, "还原数据",
+                                     "您确定要放弃所有未应用的更改，\n将表格还原到最初加载或上次应用时的状态吗？",
+                                     QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                                     QMessageBox.StandardButton.No)
+        if reply == QMessageBox.StandardButton.Yes:
+            self.data_model.restore_to_original()
 
     def export_table(self):
         df = self.table_view.get_data()
@@ -287,14 +339,13 @@ class MainWindow(QMainWindow):
 
     def apply_table_changes(self):
         reply = QMessageBox.question(self, "应用更改",
-                                     "此操作将保存所有更改，之后将无法还原。\n您确定要继续吗？",
+                                     "此操作将保存所有更改为新的基准，之后将无法还原到当前状态之前的版本。\n您确定要继续吗？",
                                      QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                                      QMessageBox.StandardButton.No)
         if reply == QMessageBox.StandardButton.Yes:
             current_df = self.table_view.get_data()
-            if current_df is not None:
-                self.data_model.update_dataframe(current_df.copy())
-                QMessageBox.information(self, "成功", "所有更改已应用。")
+            self.data_model.apply_changes(current_df)
+            QMessageBox.information(self, "成功", "所有更改已应用。")
 
     def generate_chart(self, config):
         df = self.data_model.get_dataframe()
