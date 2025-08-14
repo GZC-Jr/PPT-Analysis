@@ -197,7 +197,7 @@ class MainWindow(QMainWindow):
     def _connect_signals(self):
         # 数据模型信号
         self.data_model.log_message.connect(self.log_console.add_log)
-        self.data_model.ppt_loaded.connect(self.presentation_view.set_slides)
+        self.data_model.ppt_loaded.connect(self.on_ppt_loaded)  # 修改
         self.data_model.data_loaded.connect(self.on_data_loaded)
 
         # 文件控制信号
@@ -215,15 +215,42 @@ class MainWindow(QMainWindow):
         self.chart_controls.generate_chart_signal.connect(self.generate_chart)
         self.chart_controls.export_chart_button.clicked.connect(self.export_chart)
 
+        # --- 新增：演示播放功能信号连接 ---
+        # 从控制器 -> 播放器
+        pc = self.presentation_controls
+        pv = self.presentation_view
+
+        pc.play_toggled.connect(pv.toggle_playback)
+        pc.progress_scrubbed.connect(pv.scrub_to_position)
+        pc.playback_mode_changed.connect(pv.set_playback_mode)
+        pc.speed_changed.connect(pv.set_speed)
+        pc.interval_changed.connect(pv.set_interval)
+        pc.jump_to_slide_requested.connect(pv.jump_to_slide)
+        pc.draw_settings_changed.connect(pv.set_draw_settings)
+
+        # 从播放器 -> 控制器 (反馈)
+        pv.progress_updated.connect(pc.update_progress)
+        # 当播放完成时，让播放按钮恢复到“播放”状态
+        pv.playback_finished.connect(lambda: pc.play_button.setChecked(False))
+
+    def on_ppt_loaded(self, slide_paths):
+        self.presentation_view.set_slides(slide_paths)
+
     def on_data_loaded(self):
         """当CSV数据加载或更新时调用"""
         df = self.data_model.get_dataframe()
-        if df is not None:
+        if df is not None and not df.empty:
             self.table_view.set_data(df)
             self.chart_controls.update_variable_options(list(df.columns))
             # 更新演示视图的数据
             self.presentation_view.set_mouse_data(df)
-            self.log_console.add_log("表格和图表视图已使用新数据更新。")
+            # 设置演示控制器的进度条范围
+            self.presentation_controls.set_progress_range(len(df) - 1)
+            self.log_console.add_log("表格和演示视图已使用新数据更新。")
+        else:
+            # 如果加载了空数据，重置
+            self.presentation_controls.reset_controls()
+            self.log_console.add_log("加载的数据为空或无效。")
 
     def on_bottom_panel_changed(self, action):
         """切换日志和终端视图"""
