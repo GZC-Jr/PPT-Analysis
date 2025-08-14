@@ -87,7 +87,7 @@ class PresentationControls(QWidget):
 
         interval_layout = QHBoxLayout()
         self.interval_slider = QSlider(Qt.Orientation.Horizontal)
-        self.interval_slider.setRange(10, 100)  # 1.0s to 10.0s
+        self.interval_slider.setRange(1, 100)  # 1.0s to 10.0s
         self.interval_slider.setValue(30)  # 3.0s
         self.interval_slider.setEnabled(False)  # 默认禁用
         self.interval_edit = QLineEdit("3.0")
@@ -201,7 +201,7 @@ class PresentationControls(QWidget):
     def _on_interval_edit_changed(self):
         try:
             interval = float(self.interval_edit.text())
-            if 1.0 <= interval <= 10.0:
+            if 0.1 <= interval <= 10.0:
                 self.interval_slider.setValue(int(interval * 10))
                 self.interval_changed.emit(interval)
             else:
