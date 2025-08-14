@@ -214,10 +214,11 @@ class MainWindow(QMainWindow):
         tc = self.table_controls
         # 查找/替换
         tc.find_next_button.clicked.connect(self.find_next_in_table)
-        # tc.find_prev_button.clicked.connect(lambda: self.find_in_table(backward=True))
+        # 将 "上一个" 按钮连接到新的 backward=True 参数
+        tc.find_prev_button.clicked.connect(lambda: self.find_in_table(backward=True))
+
         tc.replace_current_button.clicked.connect(self.replace_current_in_table)
         tc.replace_all_button.clicked.connect(self.replace_all_in_table)
-
         # 样式
         tc.color_button.clicked.connect(self.set_table_font_color)
 
@@ -284,9 +285,14 @@ class MainWindow(QMainWindow):
 
         # --- 新增或修改的槽函数 ---
 
-    def find_next_in_table(self):
+    def find_in_table(self, backward=False):
         find_text = self.table_controls.find_edit.text()
-        self.table_view.find_in_table(find_text)
+        if not find_text:
+            return  # 如果没有输入，则不执行任何操作
+        self.table_view.find_in_table(find_text, backward=backward)
+
+    def find_next_in_table(self):
+        self.find_in_table(backward=False)
 
     def replace_current_in_table(self):
         replace_text = self.table_controls.replace_with_edit.text()
