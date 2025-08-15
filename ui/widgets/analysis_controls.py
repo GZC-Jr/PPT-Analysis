@@ -17,6 +17,7 @@ class ContextMenuLabel(QLabel):
 class AnalysisControls(QWidget):
     analysis_requested = pyqtSignal(dict)
     export_csv_requested = pyqtSignal(dict)
+    style_settings_requested = pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -30,6 +31,7 @@ class AnalysisControls(QWidget):
         # 模块分析组
         module_group = QGroupBox("模块")
         module_layout = QVBoxLayout()
+        self.style_button = QPushButton("样式设置")
         self.module_switch = Switch()
 
         # ====================  修改点 1 ====================
@@ -56,6 +58,7 @@ class AnalysisControls(QWidget):
         self.export_csv_button = QPushButton("导出CSV文件")
 
         module_layout.addLayout(form_layout)
+        module_layout.addWidget(self.style_button)
         module_layout.addWidget(self.export_csv_button)
         module_group.setLayout(module_layout)
         main_layout.addWidget(module_group)
@@ -121,7 +124,8 @@ class AnalysisControls(QWidget):
     def _connect_signals(self):
         self.generate_button.clicked.connect(self._emit_analysis_request)
         self.export_csv_button.clicked.connect(self._emit_export_csv_request)
-        self.interpage_label.customContextMenuRequested.connect(self._show_color_menu)
+        self.style_button.clicked.connect(self.style_settings_requested.emit)
+
 
     def _emit_analysis_request(self):
         try:
@@ -151,7 +155,3 @@ class AnalysisControls(QWidget):
         except ValueError:
             print("错误：请确保所有阈值输入框都已填写正确的数值。")
 
-    def _show_color_menu(self, pos):
-        color = QColorDialog.getColor()
-        if color.isValid():
-            print(f"颜色已选择: {color.name()}, 功能待实现")

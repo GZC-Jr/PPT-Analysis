@@ -3,8 +3,9 @@ import pandas as pd
 from sklearn.cluster import DBSCAN
 from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                              QStackedWidget, QSplitter, QFileDialog, QToolBar,
-                             QMessageBox, QColorDialog, QProgressDialog, QApplication)
-from PyQt6.QtGui import QIcon, QAction, QActionGroup, QColor
+                             QMessageBox, QColorDialog, QProgressDialog, QApplication,
+                             QDialog, QDialogButtonBox, QPushButton)
+from PyQt6.QtGui import QIcon, QAction, QActionGroup, QColor, QPalette
 from PyQt6.QtCore import Qt, pyqtSignal, QSize
 
 from core.data_model import DataModel
@@ -19,9 +20,80 @@ from ui.widgets.analysis_controls import AnalysisControls
 from ui.widgets.analysis_view import AnalysisView
 from core.analysis_utils import process_module_analysis # 用于导出
 
+
+# --- 定义自定义对话框 ---
+class ColorSettingsDialog(QDialog):
+    def __init__(self, initial_start, initial_end, initial_link, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("样式设置")
+
+        self.start_color = initial_start
+        self.end_color = initial_end
+        self.link_color = initial_link
+
+        layout = QVBoxLayout(self)
+        form_layout = QHBoxLayout()
+
+        self.start_btn = self._create_color_button("起始颜色", self.start_color)
+        self.end_btn = self._create_color_button("终止颜色", self.end_color)
+        self.link_btn = self._create_color_button("连线颜色", self.link_color)
+
+        self.start_btn.clicked.connect(self.pick_start_color)
+        self.end_btn.clicked.connect(self.pick_end_color)
+        self.link_btn.clicked.connect(self.pick_link_color)
+
+        form_layout.addWidget(self.start_btn)
+        form_layout.addWidget(self.end_btn)
+        form_layout.addWidget(self.link_btn)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+
+        layout.addLayout(form_layout)
+        layout.addWidget(buttons)
+
+    def _create_color_button(self, text, color):
+        btn = QPushButton(text)
+        btn.setFixedSize(100, 40)
+        self.update_button_color(btn, color)
+        return btn
+
+    def update_button_color(self, button, color):
+        palette = button.palette()
+        palette.setColor(QPalette.ColorRole.Button, color)
+        button.setPalette(palette)
+        button.setAutoFillBackground(True)
+
+    def pick_start_color(self):
+        color = QColorDialog.getColor(self.start_color, self, "选择起始颜色")
+        if color.isValid():
+            self.start_color = color
+            self.update_button_color(self.start_btn, color)
+
+    def pick_end_color(self):
+        color = QColorDialog.getColor(self.end_color, self, "选择终止颜色")
+        if color.isValid():
+            self.end_color = color
+            self.update_button_color(self.end_btn, color)
+
+    def pick_link_color(self):
+        color = QColorDialog.getColor(self.link_color, self, "选择连线颜色")
+        if color.isValid():
+            self.link_color = color
+            self.update_button_color(self.link_btn, color)
+
+    def getColors(self):
+        return self.start_color, self.end_color, self.link_color
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
+        # --- 添加样式状态变量 ---
+        self.module_start_color = QColor("#4575b4")
+        self.module_end_color = QColor("#d73027")
+        self.module_link_color = QColor("#aaaaaa")
+
         self.setWindowTitle("PPT-Analysis - 鼠标行为可视化分析工具")
         self.setGeometry(100, 100, 1600, 900)
 
@@ -245,8 +317,11 @@ class MainWindow(QMainWindow):
         self.chart_controls.generate_chart_signal.connect(self.generate_chart)
         self.chart_controls.export_chart_button.clicked.connect(self.export_chart)
 
+        # --- 在分析功能的连接部分 ---
         self.analysis_controls.analysis_requested.connect(self.run_analysis)
         self.analysis_controls.export_csv_requested.connect(self.export_analysis_csv)
+        # 当controls请求颜色时，我们弹出一个对话框
+        self.analysis_controls.style_settings_requested.connect(self.prompt_for_style_settings)
 
         # --- 演示播放功能信号连接 (重构版) ---
         pc = self.presentation_controls
@@ -395,6 +470,22 @@ class MainWindow(QMainWindow):
 
     def run_analysis(self, config):
         self.analysis_view.run_analysis(config)
+
+    def prompt_for_style_settings(self):
+        dialog = ColorSettingsDialog(
+            self.module_start_color,
+            self.module_end_color,
+            self.module_link_color,
+            self
+        )
+        if dialog.exec():
+            self.module_start_color, self.module_end_color, self.module_link_color = dialog.getColors()
+            # 将新颜色传递给 AnalysisView
+            self.analysis_view.handle_style_change(
+                self.module_start_color,
+                self.module_end_color,
+                self.module_link_color
+            )
 
     def export_analysis_csv(self, config):
         df = self.data_model.get_dataframe()

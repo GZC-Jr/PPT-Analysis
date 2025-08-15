@@ -1,23 +1,32 @@
-// 全局变量，用于存储图表实例，方便后续操作（如调整大小、释放资源）
+/**
+ * @file analysis_view.js
+ * @description This script handles the rendering of advanced analysis charts (Module Graph, Interpage Heatmap)
+ * using ECharts. It is controlled by the Python backend via QWebEngineView.
+ */
+
+// Global variables to hold the chart instance and its current configuration
 let analysisChart;
+let currentOption;
+
+// Global object to store the current style settings (colors)
+let currentStyle = {
+    startColor: '#4575b4', // Default start color for module gradient
+    endColor: '#d73027',   // Default end color for module gradient
+    linkColor: '#aaa'       // Default color for links
+};
 
 /**
- * 主更新函数，由Python调用。
- * 负责解析数据、设置背景、并分发到具体的渲染函数。
- * @param {string} jsonData - 从Python传来的包含配置和数据的JSON字符串。
+ * Main update function, called directly from Python.
+ * It receives a pre-parsed JavaScript object as its configuration.
+ * @param {object} config - The configuration object from Python, containing mode, data, and settings.
  */
-function updateAnalysis(jsonData) {
-    // 调试日志：打印从Python收到的原始数据
-    console.log("Received data from Python:", jsonData);
+function updateAnalysis(config) {
+    console.log("Received config object from Python:", config);
 
     try {
-        const config = JSON.parse(jsonData);
-        // 调试日志：打印成功解析后的JavaScript对象
-        console.log("Parsed config object:", config);
-
         const container = document.getElementById('analysis-container');
 
-        // 设置或清除背景图片
+        // 1. Set or clear the background image
         if (config.page_bg_url) {
             container.style.backgroundImage = `url('${config.page_bg_url}')`;
             container.style.backgroundSize = 'contain';
@@ -27,122 +36,146 @@ function updateAnalysis(jsonData) {
             container.style.backgroundImage = 'none';
         }
 
-        // 释放旧的图表实例，防止内存泄漏
+        // 2. Dispose of the old chart instance to prevent memory leaks
         if (analysisChart) {
             analysisChart.dispose();
         }
-        // 初始化新的ECharts实例
-        analysisChart = echarts.init(container, 'dark'); // 使用内置的暗色主题
+        // 3. Initialize a new ECharts instance
+        analysisChart = echarts.init(container, 'dark'); // Use built-in dark theme
 
-        // 根据模式调用不同的渲染函数
+        // 4. Route to the appropriate rendering function based on the mode
         if (config.mode === 'module') {
             renderModuleGraph(config.data);
         } else if (config.mode === 'interpage') {
-            container.style.backgroundImage = 'none'; // 页际图不应有单页背景
+            container.style.backgroundImage = 'none'; // Interpage view should not have a background
             renderInterpageHeatmap(config.data);
         } else if (config.mode === 'error') {
             container.innerHTML = `<p style="color: orange; font-family: sans-serif; text-align:center;">${config.message}</p>`;
         } else {
-            // 如果没有指定模式，显示默认提示
             container.innerHTML = '<p style="color: white; font-family: sans-serif; text-align:center;">请在左侧选择分析模式并生成图表。</p>';
         }
 
     } catch (e) {
-        // 捕获JSON解析或其他JS错误
-        console.error("Failed to parse JSON data or render chart:", e);
-        console.error("Original data string was:", jsonData);
+        // Catch any errors during JSON parsing or chart rendering
+        console.error("Error during chart rendering:", e);
         const container = document.getElementById('analysis-container');
-        container.innerHTML = `<p style="color: red; font-family: sans-serif; text-align:center;">前端错误：无法解析或渲染数据！<br>请在浏览器中打开 http://localhost:8888 检查开发者控制台获取详情。</p>`;
+        container.innerHTML = `<p style="color: red; font-family: sans-serif; text-align:center;">前端渲染错误！<br>请在浏览器中打开 http://localhost:8888 检查开发者控制台获取详情。</p>`;
     }
 }
 
 /**
- * 渲染模块关系图 (ECharts Graph)。
- * @param {object} data - 包含nodes, links, scatters的数据对象。
+ * Renders the Module Relationship Graph.
+ * @param {object} data - An object containing nodes, links, and scatters data from the backend.
  */
 function renderModuleGraph(data) {
-    const option = {
-        backgroundColor: 'transparent', // 使ECharts背景透明以显示CSS背景图
-        title: {
-            text: '模块间使用关系图',
-            left: 'center',
-            textStyle: { color: '#fff' }
-        },
+    const startColor = currentStyle.startColor;
+    const endColor = currentStyle.endColor;
+
+    currentOption = {
+        backgroundColor: 'transparent', // Make ECharts background transparent to show the CSS background image
+        title: { text: '模块间使用关系图', left: 'center', textStyle: { color: '#fff' } },
         tooltip: {
-            formatter: function (params) {
-                if (params.dataType === 'node') {
-                    return `<b>${params.data.name}</b><br/>强度: ${params.data.value.toFixed(2)}`;
-                }
-                if (params.dataType === 'edge') {
-                    return `关联度: ${params.data.value.toFixed(2)}`;
-                }
+            formatter: (params) => {
+                if (params.dataType === 'node') return `<b>${params.data.name}</b><br/>强度: ${params.data.value.toFixed(2)}`;
+                if (params.dataType === 'edge') return `关联度: ${params.data.value.toFixed(2)}`;
                 return '';
             }
         },
-        // 定义一个与PPT 1920x1080 分辨率匹配的笛卡尔坐标系
+        // Define a Cartesian coordinate system matching the 1920x1080 PPT resolution
         xAxis: { min: 0, max: 1920, show: false, type: 'value' },
-        yAxis: { min: 0, max: 1080, show: false, type: 'value', inverse: true }, // Y轴反转以匹配屏幕坐标
+        yAxis: { min: 0, max: 1080, show: false, type: 'value', inverse: true }, // Y-axis is inverted to match screen coordinates
         series: [{
             name: '模块分析',
             type: 'graph',
-            layout: 'none', // 使用我们自己提供的x, y坐标
-            roam: true,     // 允许用户缩放和拖拽图表
-            label: {
-                show: true,
-                position: 'bottom',
-                color: '#fff',
-                fontSize: 10
-            },
-            // 节点（模块）数据
+            layout: 'none', // We provide our own x, y coordinates
+            roam: true,     // Allow zooming and panning
+            label: { show: true, position: 'bottom', color: '#fff', fontSize: 10 },
             data: data.nodes.map(node => ({
                 ...node,
                 itemStyle: {
-                    // 强度D映射为透明度
+                    // Color is interpolated based on normalized position
+                    color: interpolateColor(startColor, endColor, node.pos_norm),
+                    // Opacity is mapped from strength D
                     opacity: Math.min(1.0, Math.max(0.2, (node.value - 3) / 20.0))
                 }
             })),
-            // 连线数据
             links: data.links,
-            // 连线视觉样式
             edgeSymbol: ['none', 'arrow'],
             edgeSymbolSize: [4, 8],
             lineStyle: {
-                color: '#aaa',
+                color: currentStyle.linkColor,
                 curveness: 0.1
             },
-            // 使用 markPoint 在图上绘制未被聚类的散点
+            // Use markPoint to render un-clustered scatter points
             markPoint: {
                 symbol: 'circle',
                 symbolSize: 6,
                 label: { show: false },
-                itemStyle: {
-                    color: 'rgba(255, 255, 255, 0.5)' // 默认散点颜色
-                },
+                itemStyle: { color: 'rgba(255, 255, 255, 0.5)' },
                 data: data.scatters.map(p => ({
-                    name: p.ActionType,
-                    // markPoint需要x,y坐标
-                    x: p.X,
-                    y: p.Y,
-                    // 可以根据动作类型设置不同颜色，以提供更多信息
-                    itemStyle: {
-                        color: p.ActionType === 'CLICK' ? '#007bff' : (p.ActionType === 'HOVER' ? '#ffc107' : 'rgba(200, 200, 200, 0.5)')
-                    }
+                    name: p.ActionType, x: p.X, y: p.Y,
+                    itemStyle: { color: p.ActionType === 'CLICK' ? '#007bff' : (p.ActionType === 'HOVER' ? '#ffc107' : 'rgba(200, 200, 200, 0.5)') }
                 }))
             }
         }]
     };
-    analysisChart.setOption(option);
+    analysisChart.setOption(currentOption);
 }
 
 /**
- * 渲染页际关系热力图。
- * 使用散点图模拟幻灯片网格布局，用lines系列绘制跳转关系。
- * @param {object} data - 包含strengths和transitions的数据对象。
+ * A helper function to interpolate between two hex/rgb colors.
+ * @param {string} color1 - The start color (e.g., '#ff0000' or 'rgb(255,0,0)').
+ * @param {string} color2 - The end color.
+ * @param {number} factor - The interpolation factor, from 0 to 1.
+ * @returns {string} The resulting color in 'rgb(r,g,b)' format.
+ */
+function interpolateColor(color1, color2, factor) {
+    factor = Math.max(0, Math.min(1, factor));
+    const c1 = echarts.color.parse(color1); // ECharts' utility to parse color into [r,g,b,a]
+    const c2 = echarts.color.parse(color2);
+    const result = [
+        Math.round(c1[0] + factor * (c2[0] - c1[0])),
+        Math.round(c1[1] + factor * (c2[1] - c1[1])),
+        Math.round(c1[2] + factor * (c2[2] - c1[2])),
+    ];
+    return `rgb(${result[0]}, ${result[1]}, ${result[2]})`;
+}
+
+/**
+ * Public API function called from Python to dynamically update the chart's style.
+ * @param {object} styleConfig - An object containing startColor, endColor, and linkColor.
+ */
+function setModuleStyle(styleConfig) {
+    if (!analysisChart || !currentOption) return;
+    
+    console.log("Updating style with:", styleConfig);
+
+    // Update the global style object
+    currentStyle.startColor = styleConfig.startColor;
+    currentStyle.endColor = styleConfig.endColor;
+    currentStyle.linkColor = styleConfig.linkColor;
+
+    // Recalculate color for each node based on the new gradient
+    currentOption.series[0].data.forEach(node => {
+        if (node.itemStyle) {
+            node.itemStyle.color = interpolateColor(currentStyle.startColor, currentStyle.endColor, node.pos_norm);
+        }
+    });
+    
+    // Update the link color
+    currentOption.series[0].lineStyle.color = currentStyle.linkColor;
+
+    // Re-apply the updated option to the chart
+    analysisChart.setOption(currentOption);
+}
+
+/**
+ * Renders the Interpage Relationship Heatmap.
+ * (This function remains as a placeholder for future expansion, based on previous implementation)
  */
 function renderInterpageHeatmap(data) {
     const slidePositions = {};
-    const gridCols = Math.ceil(Math.sqrt(data.strengths.length)) || 5; // 动态计算网格列数
-
+    const gridCols = Math.ceil(Math.sqrt(data.strengths.length)) || 5;
     const chartData = data.strengths.map((item, index) => {
         const row = Math.floor(index / gridCols);
         const col = index % gridCols;
@@ -153,11 +186,7 @@ function renderInterpageHeatmap(data) {
             label: { show: true, formatter: `P${item.page}\nS:${item.strength.toFixed(2)}` }
         };
     });
-
-    const linesData = data.transitions.map(t => ({
-        coords: [slidePositions[t.source], slidePositions[t.target]]
-    }));
-
+    const linesData = data.transitions.map(t => ({ coords: [slidePositions[t.source], slidePositions[t.target]] }));
     const strengths = data.strengths.map(s => s.strength);
     const minStrength = strengths.length > 0 ? Math.min(...strengths) : 0;
     const maxStrength = strengths.length > 0 ? Math.max(...strengths) : 1;
@@ -176,24 +205,13 @@ function renderInterpageHeatmap(data) {
             orient: 'horizontal',
             left: 'center',
             bottom: '0%',
-            inRange: { // 定义颜色映射
-                color: ['#50a3ba', '#eac736', '#d94e5d'] 
-            },
+            inRange: { color: ['#50a3ba', '#eac736', '#d94e5d'] },
             textStyle: { color: '#fff' }
         },
-        series: [{
-            type: 'scatter',
-            symbol: 'rect', // 使用矩形模拟幻灯片
-            symbolSize: 80,
-            data: chartData
-        }, {
-            type: 'lines',
-            coordinateSystem: 'cartesian2d',
-            zlevel: 2,
-            effect: { show: true, symbolSize: 8, trailLength: 0.5 }, // 添加特效
-            lineStyle: { width: 2, curveness: 0.2, color: '#ffb402' },
-            data: linesData
-        }]
+        series: [
+            { type: 'scatter', symbol: 'rect', symbolSize: 80, data: chartData },
+            { type: 'lines', coordinateSystem: 'cartesian2d', zlevel: 2, effect: { show: true, symbolSize: 8, trailLength: 0.5 }, lineStyle: { width: 2, curveness: 0.2, color: '#ffb402' }, data: linesData }
+        ]
     };
     analysisChart.setOption(option);
 }

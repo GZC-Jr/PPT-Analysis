@@ -2,16 +2,23 @@
 import pandas as pd
 import numpy as np
 from sklearn.cluster import DBSCAN
+from scipy.spatial.distance import pdist
+
+
+def calculate_min_enclosing_radius(points_df):
+    """计算点集最小包围圆半径的高效近似：最远点对距离的一半。"""
+    if len(points_df) < 2:
+        return 25.0  # 为单个点或空集提供一个默认半径
+    distances = pdist(points_df[['X', 'Y']].values)
+    return float(np.max(distances) / 2.0)
 
 
 def calculate_module_strength(cluster_points):
     if cluster_points.empty: return 0
     counts = cluster_points['ActionType'].value_counts()
-    x = counts.get('MOVE', 0)
-    y = counts.get('HOVER', 0)
-    z = counts.get('CLICK', 0)
+    x, y, z = counts.get('MOVE', 0), counts.get('HOVER', 0), counts.get('CLICK', 0)
     strength = np.log1p(x + 15 * y + 30 * z) + 3
-    return float(strength)  # <-- 确保返回的是原生float
+    return float(strength)
 
 
 def get_inter_module_connections(page_df, module1_indices, module2_indices):
@@ -23,7 +30,7 @@ def get_inter_module_connections(page_df, module1_indices, module2_indices):
             if (idx1 in module1_indices and idx2 in module2_indices) or \
                     (idx1 in module2_indices and idx2 in module1_indices):
                 count += 1
-    return int(count)  # <-- 确保返回的是原生int
+    return int(count)
 
 
 def process_module_analysis(df, page_num, eps, min_samples, strength_threshold):
@@ -32,7 +39,6 @@ def process_module_analysis(df, page_num, eps, min_samples, strength_threshold):
     else:
         page_df = df.copy()
 
-    # 转换为原生Python类型以进行JSON序列化
     safe_scatters = [
         {'X': float(p['X']), 'Y': float(p['Y']), 'ActionType': p['ActionType']}
         for p in page_df[['X', 'Y', 'ActionType']].to_dict('records')
@@ -52,21 +58,36 @@ def process_module_analysis(df, page_num, eps, min_samples, strength_threshold):
         strength = calculate_module_strength(cluster_df)
         if strength >= strength_threshold:
             valid_modules.append({
-                'label': int(label),  # <-- 确保label是原生int
+                'label': int(label),
                 'points': cluster_df,
                 'strength': float(strength),
                 'center_x': float(cluster_df['X'].mean()),
-                'center_y': float(cluster_df['Y'].mean())
+                'center_y': float(cluster_df['Y'].mean()),
+                'radius': calculate_min_enclosing_radius(cluster_df)
             })
+
+    # --- 核心修改：计算用于颜色映射的归一化位置值 ---
+    if valid_modules:
+        positions = np.array([[m['center_x'], m['center_y']] for m in valid_modules])
+        # 使用到左上角(0,0)的距离作为位置度量
+        distances = np.sqrt(positions[:, 0] ** 2 + positions[:, 1] ** 2)
+        min_dist, max_dist = np.min(distances), np.max(distances)
+
+        for i, mod in enumerate(valid_modules):
+            # 归一化到 [0, 1] 区间
+            if max_dist > min_dist:
+                mod['pos_norm'] = (distances[i] - min_dist) / (max_dist - min_dist)
+            else:
+                mod['pos_norm'] = 0.5  # 如果所有模块在同一点
 
     for mod in valid_modules:
         nodes.append({
             'id': f"module_{mod['label']}",
             'name': f"模块 {mod['label']}",
-            'x': mod['center_x'],
-            'y': mod['center_y'],
+            'x': mod['center_x'], 'y': mod['center_y'],
             'value': mod['strength'],
-            'symbolSize': float(eps * 2),  # <-- 确保是原生float
+            'symbolSize': mod['radius'] * 2,  # 使用计算出的真实半径
+            'pos_norm': mod.get('pos_norm', 0.5),  # 传递归一化位置
             'label': {'show': True, 'formatter': f"强度: {mod['strength']:.2f}"}
         })
 
@@ -80,7 +101,7 @@ def process_module_analysis(df, page_num, eps, min_samples, strength_threshold):
                 links.append({
                     'source': f"module_{mod1['label']}",
                     'target': f"module_{mod2['label']}",
-                    'value': float(association),  # <-- 确保是原生float
+                    'value': float(association),
                     'lineStyle': {'width': min(1 + association / 3.0, 15)}
                 })
 
@@ -88,8 +109,6 @@ def process_module_analysis(df, page_num, eps, min_samples, strength_threshold):
     if valid_modules:
         valid_indices = pd.concat([m['points'] for m in valid_modules]).index
     invalid_points_df = page_df[~page_df.index.isin(valid_indices)]
-
-    # 再次转换，确保所有散点都是安全的Python类型
     safe_scatters = [
         {'X': float(p['X']), 'Y': float(p['Y']), 'ActionType': p['ActionType']}
         for p in invalid_points_df[['X', 'Y', 'ActionType']].to_dict('records')
@@ -98,7 +117,6 @@ def process_module_analysis(df, page_num, eps, min_samples, strength_threshold):
     return {'nodes': nodes, 'links': links, 'scatters': safe_scatters}
 
 
-# ... (interpage analysis function remains the same) ...
 def process_interpage_analysis(df, all_modules_data):
     # ... (此处代码不变) ...
     page_strengths = {}
@@ -108,7 +126,7 @@ def process_interpage_analysis(df, all_modules_data):
         page_strengths[page] = page_strengths.get(page, 0) + strength
     transitions = []
     for i in range(1, len(df)):
-        prev_page, curr_page = df.iloc[i - 1]['SlideIndex'], df.iloc[i]['SlideIndex']
+        prev_page, curr_page = df.iloc[i-1]['SlideIndex'], df.iloc[i]['SlideIndex']
         if curr_page != prev_page and curr_page != prev_page + 1:
             transitions.append({'source': prev_page, 'target': curr_page})
     return {'strengths': [{'page': p, 'strength': s} for p, s in page_strengths.items()], 'transitions': transitions}

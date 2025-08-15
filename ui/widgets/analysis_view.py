@@ -3,7 +3,8 @@ import os
 import json
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QMessageBox
 from PyQt6.QtWebEngineWidgets import QWebEngineView
-from PyQt6.QtCore import QUrl
+from PyQt6.QtCore import QUrl, pyqtSlot
+from PyQt6.QtGui import QColor  # <-- 确保导入QColor
 from core.analysis_utils import process_module_analysis, process_interpage_analysis
 
 
@@ -22,6 +23,21 @@ class AnalysisView(QWidget):
         self.full_df = None
         self.slide_images = None
 
+    def _call_js_with_payload(self, function_name, payload):
+        """
+        一个健壮的、用于向JS传递数据的辅助函数。
+        它将Python字典转换为JSON，然后安全地作为参数传递给JS函数。
+        """
+        # 1. 将Python字典序列化为JSON字符串
+        json_string = json.dumps(payload)
+
+        # 2. 构建JS代码。使用模板字符串 `` 和 JSON.parse() 是最安全的方式。
+        #    这样可以避免任何由特殊字符（如引号、换行符）引起的语法错误。
+        js_code = f"{function_name}(JSON.parse(`{json_string}`));"
+
+        # 3. 执行JS
+        self.web_view.page().runJavaScript(js_code)
+
     def set_data(self, df, slide_images):
         self.full_df = df
         self.slide_images = slide_images
@@ -34,25 +50,21 @@ class AnalysisView(QWidget):
         payload = {}
         if config['module_on']:
             page_num = config['page_num']
-
-            # --- 核心修改：准备背景图片URL ---
             bg_url = ""
-            if page_num > 0:  # 全局模式(0)没有背景
-                if not self.slide_images:
-                    QMessageBox.warning(self, "无PPT", "请先加载PPT文件以显示背景。")
-                elif 0 < page_num <= len(self.slide_images):
-                    bg_path = self.slide_images[page_num - 1]
-                    # 将本地文件路径转换为Web引擎可以访问的URL
-                    bg_url = QUrl.fromLocalFile(os.path.abspath(bg_path)).toString()
+
+            if page_num > 0:
+                if not self.slide_images or not (0 < page_num <= len(self.slide_images)):
+                    # 即使没有背景图，也应该继续分析，只是不显示背景
+                    if not self.slide_images:
+                        print("警告: 未加载PPT，无法显示背景。")
+                    else:
+                        print(f"警告: 页码 {page_num} 无效，无法显示背景。")
                 else:
-                    QMessageBox.warning(self, "页码无效", f"指定的页码 {page_num} 超出范围。")
-                    # 可以在JS中显示错误
-                    payload = {'mode': 'error', 'message': f'页码 {page_num} 无效'}
-                    self.web_view.page().runJavaScript(f"updateAnalysis('{json.dumps(payload)}');")
-                    return
+                    bg_path = self.slide_images[page_num - 1]
+                    bg_url = QUrl.fromLocalFile(os.path.abspath(bg_path)).toString()
 
             payload['mode'] = 'module'
-            payload['page_bg_url'] = bg_url  # <-- 将URL添加到payload
+            payload['page_bg_url'] = bg_url
             payload['data'] = process_module_analysis(
                 self.full_df, page_num, config['eps'],
                 config['min_samples'], config['strength_threshold']
@@ -71,9 +83,18 @@ class AnalysisView(QWidget):
                 payload['data']['transitions'] = []
 
         else:
-            # 提示用户选择一种模式
-            self.web_view.page().runJavaScript("updateAnalysis('{}');")  # 发送空JSON以清屏
+            self._call_js_with_payload("updateAnalysis", {})
             return
 
-        json_data = json.dumps(payload)
-        self.web_view.page().runJavaScript(f"updateAnalysis('{json_data}');")
+        # 使用新的、健壮的辅助函数来调用JS
+        self._call_js_with_payload("updateAnalysis", payload)
+
+    # --- 更新 handle_style_change 以使用新辅助函数 ---
+    def handle_style_change(self, start_color: QColor, end_color: QColor, link_color: QColor):
+        if start_color.isValid() and end_color.isValid() and link_color.isValid():
+            style_payload = {
+                'startColor': start_color.name(),
+                'endColor': end_color.name(),
+                'linkColor': link_color.name()
+            }
+            self._call_js_with_payload("setModuleStyle", style_payload)
