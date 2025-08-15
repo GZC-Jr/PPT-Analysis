@@ -1,7 +1,8 @@
 # ui/widgets/analysis_view.py
 import os
 import json
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QMessageBox
+import base64
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QMessageBox, QFileDialog
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtCore import QUrl, pyqtSlot
 from PyQt6.QtGui import QColor  # <-- 确保导入QColor
@@ -101,3 +102,33 @@ class AnalysisView(QWidget):
             }
             # 调用JS函数
             self._call_js_with_payload("setInterpageStyle", payload)
+
+    def export_current_chart(self, save_format):
+        """调用JS获取当前图表的Base64数据并保存。"""
+
+        # 定义一个Python槽函数来接收JS返回的Base64数据
+        @pyqtSlot(str)
+        def save_image_from_base64(base64_data):
+            if not base64_data or 'base64' not in base64_data:
+                QMessageBox.warning(self, "导出失败", "无法从前端获取图表图像数据。图表可能为空。")
+                return
+
+            # 弹出文件保存对话框
+            default_filename = f"analysis_chart.{save_format}"
+            file_path, _ = QFileDialog.getSaveFileName(self, "保存分析图表", default_filename,
+                                                       f"{save_format.upper()} Files (*.{save_format})")
+
+            if file_path:
+                try:
+                    # 分离数据头和数据本身
+                    header, encoded = base64_data.split(",", 1)
+                    data = base64.b64decode(encoded)
+                    with open(file_path, "wb") as f:
+                        f.write(data)
+                    QMessageBox.information(self, "导出成功", f"图表已成功保存到:\n{file_path}")
+                except Exception as e:
+                    QMessageBox.critical(self, "保存失败", f"保存文件时发生错误: \n{e}")
+
+        # 调用JS函数，并将我们的Python槽函数作为回调传递
+        # 注意：JS函数 getChartBase64 需要在 analysis_view.js 中定义
+        self.web_view.page().runJavaScript(f"getChartBase64('{save_format}');", save_image_from_base64)

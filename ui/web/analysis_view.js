@@ -267,3 +267,20 @@ function setInterpageStyle(styleConfig) {
     currentOption.visualMap.inRange.color = [styleConfig.startColor, styleConfig.endColor];
     analysisChart.setOption(currentOption);
 }
+
+/**
+ * Public API function, called from Python, to get the current chart's image data.
+ * @param {string} format - The desired format ('png' or 'svg').
+ * @returns {string} The base64 encoded image data string.
+ */
+function getChartBase64(format) {
+    if (!analysisChart) {
+        return ''; // 如果没有图表实例，返回空
+    }
+    
+    return analysisChart.getDataURL({
+        type: format,
+        pixelRatio: 2, // 提高分辨率
+        backgroundColor: '#2E2E2E' // 匹配背景色
+    });
+}

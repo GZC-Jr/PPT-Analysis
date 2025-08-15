@@ -324,6 +324,7 @@ class MainWindow(QMainWindow):
         self.analysis_controls.export_csv_requested.connect(self.export_analysis_csv)
         self.analysis_controls.module_style_requested.connect(self.prompt_for_module_style)
         self.analysis_controls.interpage_style_requested.connect(self.prompt_for_interpage_style)
+        self.analysis_controls.export_chart_requested.connect(self.export_analysis_chart)
 
         # --- 演示播放功能信号连接 (重构版) ---
         pc = self.presentation_controls
@@ -589,3 +590,12 @@ class MainWindow(QMainWindow):
                 self.data_model.log_message.emit(f"模块数据已导出到: {file_path}")
             except Exception as e:
                 QMessageBox.critical(self, "导出失败", f"导出文件时发生错误: {e}")
+
+    def export_analysis_chart(self, config):
+        """处理来自controls的图表导出请求。"""
+        if config['mode'] == 'none':
+            QMessageBox.warning(self, "无法导出", "请先选择并生成一个分析图表（模块或页际）。")
+            return
+
+        # 将请求委托给AnalysisView
+        self.analysis_view.export_current_chart(config['format'])
