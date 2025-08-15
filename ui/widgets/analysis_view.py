@@ -5,7 +5,7 @@ from PyQt6.QtWidgets import QWidget, QVBoxLayout, QMessageBox
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtCore import QUrl, pyqtSlot
 from PyQt6.QtGui import QColor  # <-- 确保导入QColor
-from core.analysis_utils import process_module_analysis, process_interpage_analysis, precompute_clusters
+from core.analysis_utils import process_module_analysis, process_interpage_analysis
 
 
 class AnalysisView(QWidget):
@@ -70,25 +70,17 @@ class AnalysisView(QWidget):
                 config['min_samples'], config['strength_threshold']
             )
 
-        elif config['interpage_on']:
-            # --- 核心修改：先预计算，再分析 ---
-            # 1. 调用新的预计算函数
-            df_with_clusters = precompute_clusters(self.full_df, config['eps'], config['min_samples'])
 
-            # 2. 将带有聚类结果的DataFrame传递给纯聚合函数
+        elif config['interpage_on']:
+            # --- 核心修改：简化调用流程 ---
+            # 直接将原始DataFrame传递给新的分析函数
             payload['mode'] = 'interpage'
-            payload['data'] = process_interpage_analysis(
-                df_with_clusters,
-                config['strength_threshold']
-            )
+            payload['data'] = process_interpage_analysis(self.full_df)
+            # (歧线/关联的开关逻辑保持不变)
             if not config['show_divergence'] and not config['show_association']:
                 payload['data']['transitions'] = []
-
         else:
-            self._call_js_with_payload("updateAnalysis", {})
-            return
-
-        # 使用新的、健壮的辅助函数来调用JS
+            self._call_js_with_payload("updateAnalysis", {}); return
         self._call_js_with_payload("updateAnalysis", payload)
 
     # --- 更新 handle_style_change 以使用新辅助函数 ---

@@ -5,8 +5,10 @@ from sklearn.cluster import DBSCAN
 from scipy.spatial.distance import pdist
 
 
-# ... (calculate_min_enclosing_radius, calculate_module_strength,
-#      get_inter_module_connections, process_module_analysis 保持不变)
+# ... (calculate_min_enclosing_radius, get_inter_module_connections, process_module_analysis)
+# ... 和 precompute_clusters 函数都保持不变，因为它们仍然被“模块”分析和CSV导出功能使用。
+# ... 为简洁起见，此处省略这些不变的函数，只展示被修改的 process_interpage_analysis 函数...
+
 def calculate_min_enclosing_radius(points_df):
     if len(points_df) < 2: return 25.0
     distances = pdist(points_df[['X', 'Y']].values)
@@ -81,73 +83,53 @@ def process_module_analysis(df, page_num, eps, min_samples, strength_threshold):
     return {'nodes': nodes, 'links': links, 'scatters': safe_scatters}
 
 
-# --- 核心修复：新的预计算函数和重构的页际分析函数 ---
-
 def precompute_clusters(df, eps, min_samples):
-    """
-    一个独立的、一次性的预计算步骤。
-    它为整个DataFrame的所有页面计算聚类标签。
-    """
-    if df is None or df.empty:
-        return None
+    if df is None or df.empty: return None
 
-    df_copy = df.copy()
-    # 使用一个肯定不会与DBSCAN标签冲突的初始值
-    df_copy['cluster'] = -100
-
-    # 使用 groupby().apply() 是这里最Pythonic的方式，且操作简单，不会溢出
     def get_clusters(page_group):
         if len(page_group) < min_samples:
-            return pd.Series(-1, index=page_group.index)  # 标记为噪声
-
+            page_group['cluster'] = -1
+            return page_group
         db_labels = DBSCAN(eps=eps, min_samples=min_samples).fit(page_group[['X', 'Y']]).labels_
-        return pd.Series(db_labels, index=page_group.index)
+        page_group['cluster'] = db_labels
+        return page_group
 
-    # 计算所有聚类标签
-    all_labels = df_copy.groupby('SlideIndex').apply(get_clusters)
-
-    # 将聚类标签合并回DataFrame
-    # all_labels 的索引是 (SlideIndex, original_index)，我们需要重置它
-    all_labels = all_labels.reset_index(level=0, drop=True)
-    df_copy['cluster'] = all_labels
-
-    return df_copy
+    df_with_clusters = df.copy().groupby('SlideIndex', group_keys=False).apply(get_clusters)
+    return df_with_clusters.reset_index(drop=True)
 
 
-def process_interpage_analysis(df_with_clusters, strength_threshold):
+# --- 核心修改：重写 process_interpage_analysis ---
+def process_interpage_analysis(df):
     """
-    进行页际关系分析 (最终版)。
-    这个函数现在是一个纯粹的、无循环的聚合函数。
-    它接收已经计算好聚类的DataFrame。
+    进行页际关系分析。
+    这个函数现在直接基于整个页面的动作计数，不再依赖于聚类。
     """
-    if df_with_clusters is None or df_with_clusters.empty:
+    if df is None or df.empty:
         return {'strengths': [], 'transitions': []}
 
-    # 1. 向量化计算所有模块的强度
-    clustered_points = df_with_clusters[df_with_clusters['cluster'] >= 0].copy()
+    # 1. 高效计算每页的强度 P = ln(x+15y+30z)
 
-    if clustered_points.empty:
-        page_strengths = {page: 0 for page in df_with_clusters['SlideIndex'].unique()}
-    else:
-        action_counts = clustered_points.groupby(['SlideIndex', 'cluster', 'ActionType']).size().unstack(fill_value=0)
+    # 按页面分组，并计算每种动作类型的数量
+    action_counts = df.groupby('SlideIndex')['ActionType'].value_counts().unstack(fill_value=0)
 
-        for col in ['MOVE', 'HOVER', 'CLICK']:
-            if col not in action_counts.columns: action_counts[col] = 0
+    # 确保 MOVE, HOVER, CLICK 列都存在
+    for col in ['MOVE', 'HOVER', 'CLICK']:
+        if col not in action_counts.columns:
+            action_counts[col] = 0
 
-        strengths = np.log1p(action_counts['MOVE'] + 15 * action_counts['HOVER'] + 30 * action_counts['CLICK']) + 3
-        valid_strengths = strengths[strengths >= strength_threshold]
+    # 计算公式的参数
+    log_arg = action_counts['MOVE'] + 15 * action_counts['HOVER'] + 30 * action_counts['CLICK']
 
-        if valid_strengths.empty:
-            page_strengths = {page: 0 for page in df_with_clusters['SlideIndex'].unique()}
-        else:
-            page_strengths_series = valid_strengths.groupby(level='SlideIndex').sum()
-            page_strengths = {page: page_strengths_series.get(page, 0) for page in
-                              df_with_clusters['SlideIndex'].unique()}
+    # 计算强度 P，使用 np.log1p (即 log(1+x)) 来优雅地处理参数为0的情况，避免-inf
+    page_strengths_series = np.log1p(log_arg)
 
-    # 2. 识别歧线
+    # 创建一个包含所有页码的字典，以确保即使某页没有动作，也会被包含（强度为0）
+    all_pages = df['SlideIndex'].unique()
+    page_strengths = {page: page_strengths_series.get(page, 0) for page in all_pages}
+
+    # 2. 识别歧线 (此部分逻辑不变)
     transitions = []
-    # 注意：这里我们使用原始的 df (df_with_clusters) 来确保时间戳顺序
-    df_sorted = df_with_clusters.sort_values(by='Timestamp').reset_index(drop=True)
+    df_sorted = df.sort_values(by='Timestamp')
     for i in range(1, len(df_sorted)):
         prev_page = df_sorted.iloc[i - 1]['SlideIndex']
         curr_page = df_sorted.iloc[i]['SlideIndex']

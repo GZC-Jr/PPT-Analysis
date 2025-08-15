@@ -22,7 +22,6 @@ class AnalysisControls(QWidget):
     # ====================  修改点 1: 明确定义两个独立的信号 ====================
     module_style_requested = pyqtSignal()
     interpage_style_requested = pyqtSignal()
-
     # ========================================================================
 
     def __init__(self, parent=None):

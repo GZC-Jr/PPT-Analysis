@@ -136,22 +136,31 @@ function renderInterpageHeatmap(data) {
     const allPages = data.strengths.map(s => s.page).sort((a, b) => a - b);
     const gridCols = Math.ceil(Math.sqrt(allPages.length)) || 5;
 
+    // 为所有存在的页面分配位置
     allPages.forEach((page, index) => {
         const row = Math.floor(index / gridCols);
         const col = index % gridCols;
         slidePositions[page] = [col, row];
     });
     
+    // 创建散点图数据
     const chartData = data.strengths.map(item => ({
         name: `第 ${item.page} 页`,
-        value: [...slidePositions[item.page], item.strength],
-        label: { show: true, formatter: `P${item.page}` }
+        value: [...slidePositions[item.page], item.strength], // [x, y, strength]
+        label: { show: true, formatter: `P${item.page}` } // 只显示页码
     }));
 
-    const linesData = data.transitions.map(t => ({
-        name: `${t.source} -> ${t.target}`,
-        coords: [slidePositions[t.source], slidePositions[t.target]]
-    }));
+    // 创建歧线数据
+    const linesData = data.transitions.map(t => {
+        // 确保source和target都在位置字典中，防止因过滤导致错误
+        if (slidePositions[t.source] && slidePositions[t.target]) {
+            return {
+                name: `${t.source} -> ${t.target}`,
+                coords: [slidePositions[t.source], slidePositions[t.target]]
+            };
+        }
+        return null;
+    }).filter(Boolean); // 过滤掉null项
 
     const strengths = data.strengths.map(s => s.strength);
     const minStrength = strengths.length > 0 ? Math.min(...strengths) : 0;
@@ -163,8 +172,12 @@ function renderInterpageHeatmap(data) {
         tooltip: {
             trigger: 'item',
             formatter: (params) => {
-                if (params.seriesType === 'scatter') return `${params.name}<br/>强度: ${params.value[2].toFixed(2)}`;
-                if (params.seriesType === 'lines') return `异常跳转: ${params.document.querySelector("body > div.main.clearfix > div.main-middle > div:nth-child(2) > ul > li:nth-child(1) > div.name-title")}`;
+                if (params.seriesType === 'scatter') {
+                    return `${params.name}<br/>强度: ${params.value[2].toFixed(2)}`;
+                }
+                if (params.seriesType === 'lines') {
+                    return `异常跳转: ${params.name}`;
+                }
                 return '';
             }
         },
@@ -179,13 +192,14 @@ function renderInterpageHeatmap(data) {
             left: 'center',
             bottom: '5%',
             text: ['强', '弱'],
+            // 使用全局样式变量
             inRange: { color: [currentInterpageStyle.startColor, currentInterpageStyle.endColor] },
             textStyle: { color: '#fff' }
         },
         series: [{
             name: '页面强度',
             type: 'scatter',
-            symbol: 'rect',
+            symbol: 'rect', // 使用矩形模拟幻灯片
             symbolSize: [80, 60],
             data: chartData,
             label: { color: '#000', fontWeight: 'bold' }
@@ -230,11 +244,13 @@ function setModuleStyle(styleConfig) {
     if (!analysisChart || !currentOption || currentOption.series[0].type !== 'graph') return;
     console.log("Updating module style with:", styleConfig);
     currentModuleStyle = styleConfig;
+    // 重新计算每个节点的颜色
     currentOption.series[0].data.forEach(node => {
-        if (node.itemStyle) {
+        if (node.itemStyle) { // 确保itemStyle存在
             node.itemStyle.color = interpolateColor(currentModuleStyle.startColor, currentModuleStyle.endColor, node.pos_norm);
         }
     });
+    // 更新连线颜色
     currentOption.series[0].lineStyle.color = currentModuleStyle.linkColor;
     analysisChart.setOption(currentOption);
 }
@@ -247,6 +263,7 @@ function setInterpageStyle(styleConfig) {
     if (!analysisChart || !currentOption || !currentOption.visualMap) return;
     console.log("Updating interpage style with:", styleConfig);
     currentInterpageStyle = styleConfig;
+    // 更新visualMap的颜色范围
     currentOption.visualMap.inRange.color = [styleConfig.startColor, styleConfig.endColor];
     analysisChart.setOption(currentOption);
 }

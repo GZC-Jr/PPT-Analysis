@@ -489,7 +489,7 @@ class MainWindow(QMainWindow):
         dialog = ColorSettingsDialog(
             self.interpage_start_color, self.interpage_end_color, QColor("white"), self
         )
-        # 隐藏不需要的连线颜色按钮
+        # 隐藏不需要的连线颜色按钮，并更新标题
         dialog.link_btn.setVisible(False)
         dialog.setWindowTitle("页际样式设置")
 
