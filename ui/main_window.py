@@ -93,6 +93,8 @@ class MainWindow(QMainWindow):
         self.module_start_color = QColor("#4575b4")
         self.module_end_color = QColor("#d73027")
         self.module_link_color = QColor("#aaaaaa")
+        self.interpage_start_color = QColor("#50a3ba")
+        self.interpage_end_color = QColor("#d94e5d")
 
         self.setWindowTitle("PPT-Analysis - 鼠标行为可视化分析工具")
         self.setGeometry(100, 100, 1600, 900)
@@ -320,8 +322,8 @@ class MainWindow(QMainWindow):
         # --- 在分析功能的连接部分 ---
         self.analysis_controls.analysis_requested.connect(self.run_analysis)
         self.analysis_controls.export_csv_requested.connect(self.export_analysis_csv)
-        # 当controls请求颜色时，我们弹出一个对话框
-        self.analysis_controls.style_settings_requested.connect(self.prompt_for_style_settings)
+        self.analysis_controls.module_style_requested.connect(self.prompt_for_module_style)
+        self.analysis_controls.interpage_style_requested.connect(self.prompt_for_interpage_style)
 
         # --- 演示播放功能信号连接 (重构版) ---
         pc = self.presentation_controls
@@ -471,20 +473,28 @@ class MainWindow(QMainWindow):
     def run_analysis(self, config):
         self.analysis_view.run_analysis(config)
 
-    def prompt_for_style_settings(self):
+    def prompt_for_module_style(self):
         dialog = ColorSettingsDialog(
-            self.module_start_color,
-            self.module_end_color,
-            self.module_link_color,
-            self
+            self.module_start_color, self.module_end_color, self.module_link_color, self
         )
         if dialog.exec():
             self.module_start_color, self.module_end_color, self.module_link_color = dialog.getColors()
-            # 将新颜色传递给 AnalysisView
             self.analysis_view.handle_style_change(
-                self.module_start_color,
-                self.module_end_color,
-                self.module_link_color
+                self.module_start_color, self.module_end_color, self.module_link_color
+            )
+
+    # --- 新增槽函数 ---
+    def prompt_for_interpage_style(self):
+        dialog = ColorSettingsDialog(
+            self.interpage_start_color, self.interpage_end_color, QColor("white"), self
+        )
+        dialog.link_btn.setVisible(False)
+        dialog.setWindowTitle("页际样式设置")
+
+        if dialog.exec():
+            self.interpage_start_color, self.interpage_end_color, _ = dialog.getColors()
+            self.analysis_view.handle_interpage_style_change(
+                self.interpage_start_color, self.interpage_end_color
             )
 
     def export_analysis_csv(self, config):

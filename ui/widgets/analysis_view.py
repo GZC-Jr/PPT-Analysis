@@ -5,7 +5,7 @@ from PyQt6.QtWidgets import QWidget, QVBoxLayout, QMessageBox
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtCore import QUrl, pyqtSlot
 from PyQt6.QtGui import QColor  # <-- 确保导入QColor
-from core.analysis_utils import process_module_analysis, process_interpage_analysis
+from core.analysis_utils import process_module_analysis, process_interpage_analysis, precompute_clusters
 
 
 class AnalysisView(QWidget):
@@ -71,14 +71,16 @@ class AnalysisView(QWidget):
             )
 
         elif config['interpage_on']:
+            # --- 核心修改：先预计算，再分析 ---
+            # 1. 调用新的预计算函数
+            df_with_clusters = precompute_clusters(self.full_df, config['eps'], config['min_samples'])
+
+            # 2. 将带有聚类结果的DataFrame传递给纯聚合函数
             payload['mode'] = 'interpage'
-            all_modules = []
-            for page in self.full_df['SlideIndex'].unique():
-                modules = process_module_analysis(self.full_df, page, config['eps'], config['min_samples'],
-                                                  config['strength_threshold'])['nodes']
-                for m in modules:
-                    all_modules.append({'page': page, 'strength': m['value']})
-            payload['data'] = process_interpage_analysis(self.full_df, all_modules)
+            payload['data'] = process_interpage_analysis(
+                df_with_clusters,
+                config['strength_threshold']
+            )
             if not config['show_divergence'] and not config['show_association']:
                 payload['data']['transitions'] = []
 
@@ -98,3 +100,12 @@ class AnalysisView(QWidget):
                 'linkColor': link_color.name()
             }
             self._call_js_with_payload("setModuleStyle", style_payload)
+
+    def handle_interpage_style_change(self, start_color: QColor, end_color: QColor):
+        if start_color.isValid() and end_color.isValid():
+            payload = {
+                'startColor': start_color.name(),
+                'endColor': end_color.name()
+            }
+            # 调用新的JS函数
+            self._call_js_with_payload("setInterpageStyle", payload)
