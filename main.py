@@ -1,8 +1,14 @@
 import sys
+import os
 from PyQt6.QtWidgets import QApplication
 from ui.main_window import MainWindow
 
 if __name__ == '__main__':
+    # --- 关键修改：启用WebEngine的远程调试 ---
+    # 必须在QApplication实例化之前设置
+    os.environ['QTWEBENGINE_REMOTE_DEBUGGING'] = '8888'
+    # --------------------------------------------
+
     app = QApplication(sys.argv)
 
     # 应用一个简单的暗色调样式表来接近设计图

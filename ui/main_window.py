@@ -1,7 +1,9 @@
 import os
+import pandas as pd
+from sklearn.cluster import DBSCAN
 from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                              QStackedWidget, QSplitter, QFileDialog, QToolBar,
-                             QMessageBox, QColorDialog)
+                             QMessageBox, QColorDialog, QProgressDialog, QApplication)
 from PyQt6.QtGui import QIcon, QAction, QActionGroup, QColor
 from PyQt6.QtCore import Qt, pyqtSignal, QSize
 
@@ -13,7 +15,9 @@ from ui.widgets.table_view import TableView
 from ui.widgets.chart_controls import ChartControls
 from ui.widgets.chart_view import ChartView
 from ui.widgets.log_console import LogConsole
-
+from ui.widgets.analysis_controls import AnalysisControls
+from ui.widgets.analysis_view import AnalysisView
+from core.analysis_utils import process_module_analysis # 用于导出
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -52,19 +56,23 @@ class MainWindow(QMainWindow):
         self.presentation_controls = PresentationControls()
         self.table_controls = TableControls()
         self.chart_controls = ChartControls()
+        self.analysis_controls = AnalysisControls()
         self.control_panel_stack.addWidget(self.file_controls)
         self.control_panel_stack.addWidget(self.presentation_controls)
         self.control_panel_stack.addWidget(self.table_controls)
         self.control_panel_stack.addWidget(self.chart_controls)
+        self.control_panel_stack.addWidget(self.analysis_controls)
 
         # 2. 视图窗格 (右侧)
         self.view_stack = QStackedWidget()
         self.presentation_view = PresentationView()
         self.table_view = TableView()
         self.chart_view = ChartView()
+        self.analysis_view = AnalysisView()
         self.view_stack.addWidget(self.presentation_view)  # 初始为空白
         self.view_stack.addWidget(self.table_view)
         self.view_stack.addWidget(self.chart_view)
+        self.view_stack.addWidget(self.analysis_view)
 
         h_splitter.addWidget(self.control_panel_stack)
         h_splitter.addWidget(self.view_stack)
@@ -119,12 +127,16 @@ class MainWindow(QMainWindow):
         self.act_chart = QAction("图表", self)
         self.act_chart.setCheckable(True)
 
+        self.act_analysis = QAction("分析", self)
+        self.act_analysis.setCheckable(True)
+
         self.act_other = QAction("其他", self)
 
         self.action_group.addAction(self.act_files)
         self.action_group.addAction(self.act_presentation)
         self.action_group.addAction(self.act_table)
         self.action_group.addAction(self.act_chart)
+        self.action_group.addAction(self.act_analysis)
 
     def _create_toolbars(self):
         # 顶部工具栏
@@ -141,6 +153,7 @@ class MainWindow(QMainWindow):
         top_toolbar.addAction(self.act_presentation)
         top_toolbar.addAction(self.act_table)
         top_toolbar.addAction(self.act_chart)
+        top_toolbar.addAction(self.act_analysis)
         top_toolbar.addAction(self.act_other)
 
         # 左侧图标栏
@@ -181,6 +194,7 @@ class MainWindow(QMainWindow):
         self.act_presentation.triggered.connect(lambda: self.switch_main_panel(1))  # 1 for presentation
         self.act_table.triggered.connect(lambda: self.switch_main_panel(2))  # 2 for table
         self.act_chart.triggered.connect(lambda: self.switch_main_panel(3))  # 3 for chart
+        self.act_analysis.triggered.connect(lambda: self.switch_main_panel(4)) # for analysis
 
     def switch_main_panel(self, index):
         """切换主控制面板和视图"""
@@ -190,7 +204,7 @@ class MainWindow(QMainWindow):
             self.view_stack.setCurrentIndex(index - 1)
 
         # 确保对应的顶部Action被选中
-        actions = [self.act_files, self.act_presentation, self.act_table, self.act_chart]
+        actions = [self.act_files, self.act_presentation, self.act_table, self.act_chart, self.act_analysis]
         if index < len(actions):
             actions[index].setChecked(True)
 
@@ -231,6 +245,9 @@ class MainWindow(QMainWindow):
         self.chart_controls.generate_chart_signal.connect(self.generate_chart)
         self.chart_controls.export_chart_button.clicked.connect(self.export_chart)
 
+        self.analysis_controls.analysis_requested.connect(self.run_analysis)
+        self.analysis_controls.export_csv_requested.connect(self.export_analysis_csv)
+
         # --- 演示播放功能信号连接 (重构版) ---
         pc = self.presentation_controls
         pv = self.presentation_view
@@ -255,10 +272,12 @@ class MainWindow(QMainWindow):
 
     def on_ppt_loaded(self, slide_paths):
         self.presentation_view.set_slides(slide_paths)
+        self.analysis_view.set_data(self.data_model.get_dataframe(), slide_paths)
 
     def on_data_loaded(self):
         """当CSV数据加载或更新时调用"""
         df = self.data_model.get_dataframe()
+        self.analysis_view.set_data(df, self.data_model.slide_images)
         # --- 使用新的restore_data方法来刷新 ---
         self.table_view.restore_data(df)
 
@@ -373,3 +392,95 @@ class MainWindow(QMainWindow):
         """
         save_config = self.chart_controls.get_save_config()
         self.chart_view.export_chart(save_config['format'])
+
+    def run_analysis(self, config):
+        self.analysis_view.run_analysis(config)
+
+    def export_analysis_csv(self, config):
+        df = self.data_model.get_dataframe()
+        if df is None or df.empty:
+            QMessageBox.warning(self, "无数据", "没有可供分析的数据。")
+            return
+
+        all_pages = sorted(df['SlideIndex'].unique())
+        total_pages = len(all_pages)
+
+        # 创建进度条对话框
+        progress = QProgressDialog("正在分析所有页面并导出模块...", "取消", 0, total_pages, self)
+        progress.setWindowModality(Qt.WindowModality.WindowModal)
+        progress.setWindowTitle("正在导出")
+        progress.show()
+
+        all_modules_details = []
+
+        try:
+            for i, page_num in enumerate(all_pages):
+                progress.setValue(i)
+                if progress.wasCanceled():
+                    break
+
+                # 对每一页运行模块分析
+                # 注意：这里我们复用了核心算法函数
+                analysis_result = process_module_analysis(
+                    df, page_num, config['eps'],
+                    config['min_samples'], config['strength_threshold']
+                )
+
+                # DBSCAN在page_df上添加了'cluster'列，我们需要重新获取它
+                page_df_with_clusters = df[df['SlideIndex'] == page_num].copy()
+                if len(page_df_with_clusters) >= config['min_samples']:
+                    db = DBSCAN(eps=config['eps'], min_samples=config['min_samples']).fit(
+                        page_df_with_clusters[['X', 'Y']].values)
+                    page_df_with_clusters['cluster'] = db.labels_
+                else:
+                    page_df_with_clusters['cluster'] = -1
+
+                # 从返回的有效模块(nodes)中提取信息
+                for node in analysis_result['nodes']:
+                    # 从ID中解析出聚类标签
+                    cluster_label = int(node['id'].split('_')[-1])
+
+                    # 找到这个聚类包含的所有点
+                    module_points_df = page_df_with_clusters[page_df_with_clusters['cluster'] == cluster_label]
+
+                    for _, point in module_points_df.iterrows():
+                        all_modules_details.append({
+                            'Page': page_num,
+                            'ModuleID': f"P{page_num}-M{cluster_label}",
+                            'ModuleRadius(eps)': config['eps'],
+                            'ModuleStrength': node['value'],
+                            'PointTimestamp': point['Timestamp'],
+                            'PointX': point['X'],
+                            'PointY': point['Y'],
+                            'PointAction': point['ActionType']
+                        })
+                QApplication.processEvents()  # 允许UI刷新
+
+            progress.setValue(total_pages)
+
+        except Exception as e:
+            progress.close()
+            QMessageBox.critical(self, "分析错误", f"在分析过程中发生错误: {e}")
+            return
+
+        if progress.wasCanceled():
+            self.data_model.log_message.emit("导出操作已取消。")
+            return
+
+        if not all_modules_details:
+            QMessageBox.information(self, "无模块", "在当前阈值下，所有页面均未找到可导出的模块。")
+            return
+
+        export_df = pd.DataFrame(all_modules_details)
+
+        # 创建包含阈值信息的文件名
+        filename = f"modules_eps{config['eps']}_minsamples{config['min_samples']}_strength{config['strength_threshold']}.csv"
+        file_path, _ = QFileDialog.getSaveFileName(self, "导出模块CSV文件", filename, "CSV Files (*.csv)")
+
+        if file_path:
+            try:
+                export_df.to_csv(file_path, index=False)
+                QMessageBox.information(self, "导出成功", f"模块数据已成功导出到:\n{file_path}")
+                self.data_model.log_message.emit(f"模块数据已导出到: {file_path}")
+            except Exception as e:
+                QMessageBox.critical(self, "导出失败", f"导出文件时发生错误: {e}")
