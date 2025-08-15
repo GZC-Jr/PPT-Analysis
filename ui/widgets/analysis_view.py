@@ -107,5 +107,5 @@ class AnalysisView(QWidget):
                 'startColor': start_color.name(),
                 'endColor': end_color.name()
             }
-            # 调用新的JS函数
+            # 调用JS函数
             self._call_js_with_payload("setInterpageStyle", payload)

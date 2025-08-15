@@ -1,8 +1,7 @@
 /**
  * @file analysis_view.js
- * @description This script handles the rendering of advanced analysis charts, including
- *              the Module Relationship Graph and the Interpage Relationship Heatmap,
- *              using Apache ECharts. It is controlled by the Python backend via QWebEngineView.
+ * @description This script handles the rendering of advanced analysis charts (Module Graph, Interpage Heatmap)
+ * using ECharts. It is controlled by the Python backend via QWebEngineView.
  */
 
 // Global variables to hold the chart instance and its current configuration
@@ -16,8 +15,8 @@ let currentModuleStyle = {
     linkColor: '#aaa'       // Default color for links
 };
 let currentInterpageStyle = {
-    startColor: '#50a3ba', // Default start color for heatmap gradient
-    endColor: '#d94e5d'   // Default end color for heatmap gradient
+    startColor: '#50a3ba', // Default start color for heatmap gradient (weak)
+    endColor: '#d94e5d'   // Default end color for heatmap gradient (strong)
 };
 
 /**
@@ -31,7 +30,7 @@ function updateAnalysis(config) {
     try {
         const container = document.getElementById('analysis-container');
 
-        // Set or clear the background image for module view
+        // 1. Set or clear the background image (only for module view)
         if (config.mode === 'module' && config.page_bg_url) {
             container.style.backgroundImage = `url('${config.page_bg_url}')`;
             container.style.backgroundSize = 'contain';
@@ -41,14 +40,14 @@ function updateAnalysis(config) {
             container.style.backgroundImage = 'none';
         }
 
-        // Dispose of the old chart instance to prevent memory leaks
+        // 2. Dispose of the old chart instance to prevent memory leaks
         if (analysisChart) {
             analysisChart.dispose();
         }
-        // Initialize a new ECharts instance with a dark theme
+        // 3. Initialize a new ECharts instance with a dark theme
         analysisChart = echarts.init(container, 'dark');
 
-        // Route to the appropriate rendering function based on the mode
+        // 4. Route to the appropriate rendering function based on the mode
         if (config.mode === 'module') {
             renderModuleGraph(config.data);
         } else if (config.mode === 'interpage') {
@@ -120,7 +119,7 @@ function renderModuleGraph(data) {
 }
 
 /**
- * Renders the Interpage Relationship Heatmap.
+ * Renders the Interpage Relationship Heatmap (Calendar View).
  * @param {object} data - An object containing strengths and transitions data.
  */
 function renderInterpageHeatmap(data) {
@@ -165,7 +164,7 @@ function renderInterpageHeatmap(data) {
             trigger: 'item',
             formatter: (params) => {
                 if (params.seriesType === 'scatter') return `${params.name}<br/>强度: ${params.value[2].toFixed(2)}`;
-                if (params.seriesType === 'lines') return `异常跳转: ${params.name}`;
+                if (params.seriesType === 'lines') return `异常跳转: ${params.document.querySelector("body > div.main.clearfix > div.main-middle > div:nth-child(2) > ul > li:nth-child(1) > div.name-title")}`;
                 return '';
             }
         },
@@ -187,7 +186,7 @@ function renderInterpageHeatmap(data) {
             name: '页面强度',
             type: 'scatter',
             symbol: 'rect',
-            symbolSize: [80, 60], // Make it more like a slide rectangle
+            symbolSize: [80, 60],
             data: chartData,
             label: { color: '#000', fontWeight: 'bold' }
         }, {
@@ -196,12 +195,13 @@ function renderInterpageHeatmap(data) {
             coordinateSystem: 'cartesian2d',
             zlevel: 2,
             effect: { show: true, period: 6, trailLength: 0.7, color: '#fff', symbolSize: 5 },
-            lineStyle: { color: '#ffb402', width: 2, curveness: 0.2 },
+            lineStyle: { color: 'red', width: 2, curveness: 0.2 },
             data: linesData
         }]
     };
     analysisChart.setOption(currentOption);
 }
+
 
 /**
  * A helper function to interpolate between two colors.

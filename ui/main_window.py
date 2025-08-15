@@ -485,14 +485,18 @@ class MainWindow(QMainWindow):
 
     # --- 新增槽函数 ---
     def prompt_for_interpage_style(self):
+        # 复用ColorSettingsDialog
         dialog = ColorSettingsDialog(
             self.interpage_start_color, self.interpage_end_color, QColor("white"), self
         )
+        # 隐藏不需要的连线颜色按钮
         dialog.link_btn.setVisible(False)
         dialog.setWindowTitle("页际样式设置")
 
         if dialog.exec():
+            # 获取选择的颜色
             self.interpage_start_color, self.interpage_end_color, _ = dialog.getColors()
+            # 将颜色传递给AnalysisView来处理
             self.analysis_view.handle_interpage_style_change(
                 self.interpage_start_color, self.interpage_end_color
             )
