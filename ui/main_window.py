@@ -359,21 +359,17 @@ class MainWindow(QMainWindow):
 
     def generate_chart(self, config):
         df = self.data_model.get_dataframe()
-        if df is None:
+        if df is None or df.empty:
             QMessageBox.warning(self, "无数据", "无法生成图表，请先加载数据。")
             return
         self.chart_view.update_charts(df, config)
-        self.data_model.log_message.emit(f"生成图表: 类型={config['types']}, X={config['x_var']}, Y={config['y_var']}")
+        self.data_model.log_message.emit(
+            f"生成ECharts图表: 类型={config['types']}, X={config['x_var']}, Y={config['y_var']}")
 
-    def export_chart(self):
-        config = self.chart_controls.get_save_config()
-        file_path, _ = QFileDialog.getSaveFileName(self, "导出图表", "",
-                                                   f"{config['format'].upper()} Files (*.{config['format']})")
-        if file_path:
-            try:
-                self.chart_view.figure.savefig(file_path, format=config['format'], bbox_inches='tight', dpi=300)
-                self.data_model.log_message.emit(f"图表成功导出到: {file_path}")
-                QMessageBox.information(self, "导出成功", f"图表已成功导出到:\n{file_path}")
-            except Exception as e:
-                self.data_model.log_message.emit(f"错误: 导出图表失败: {e}")
-                QMessageBox.critical(self, "导出失败", f"导出图表时发生错误:\n{e}")
+    def export_chart(self): # <--- 重写此方法
+        """
+        这个方法现在只是一个中继，它从controls获取保存格式，
+        然后调用chart_view中真正的导出逻辑。
+        """
+        save_config = self.chart_controls.get_save_config()
+        self.chart_view.export_chart(save_config['format'])

@@ -1,105 +1,115 @@
 # ui/widgets/chart_view.py
 
-import matplotlib
-
-matplotlib.use('qtagg')
-from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
-from matplotlib.figure import Figure
+import os
+import json
+import base64
 import pandas as pd
-from PyQt6.QtWidgets import QWidget, QVBoxLayout
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QFileDialog, QMessageBox
+from PyQt6.QtWebEngineWidgets import QWebEngineView
+from PyQt6.QtCore import QUrl, pyqtSlot
 
 
 class ChartView(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.layout = QVBoxLayout(self)
+        self.layout.setContentsMargins(0, 0, 0, 0)
 
-        self.figure = Figure(figsize=(5, 4), dpi=100)
-        self.canvas = FigureCanvas(self.figure)
+        self.web_view = QWebEngineView()
+        self.layout.addWidget(self.web_view)
 
-        self.figure.patch.set_facecolor('#2E2E2E')
-        matplotlib.rc('text', color='white')
-        matplotlib.rc('axes', labelcolor='white', facecolor='#3C3C3C', edgecolor='white')
-        matplotlib.rc('xtick', color='white');
-        matplotlib.rc('ytick', color='white')
-        matplotlib.rc('grid', color='#555555')
+        # 加载本地HTML文件
+        # 使用绝对路径确保在任何环境下都能找到文件
+        html_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'web', 'chart_view.html'))
+        self.web_view.setUrl(QUrl.fromLocalFile(html_path))
 
-        self.layout.addWidget(self.canvas)
+        self.current_chart_types = []  # 存储当前显示的图表类型，用于导出
 
     def update_charts(self, df, config):
-        self.figure.clear()
-
-        active_charts = [k for k, v in config['types'].items() if v]
-        if not active_charts or not config['x_var'] or not config['y_var']:
-            self.canvas.draw()
-            return
-
-        # --- 1. 数据筛选 (核心修改) ---
+        """
+        处理数据，转换为JSON，并调用JS函数来更新ECharts。
+        """
         page_filter = config.get('page_filter', 0)
 
         if page_filter > 0:
             source_df = df[df['SlideIndex'] == page_filter].copy()
             if source_df.empty:
-                # 如果指定页码没有数据，则显示提示信息并返回
-                ax = self.figure.add_subplot(1, 1, 1)
-                ax.text(0.5, 0.5, f"指定页码 {page_filter} 无数据", ha='center', va='center', color='orange',
-                        fontsize=14)
-                ax.set_facecolor('#3C3C3C')
-                ax.tick_params(axis='both', which='both', bottom=False, top=False, left=False, right=False,
-                               labelbottom=False, labelleft=False)
-                self.canvas.draw()
+                # 如果没有数据，可以调用JS显示提示信息
+                js_code = 'document.getElementById("chart-container").innerHTML = \'<p style="color: orange; font-family: sans-serif; text-align: center;">指定页码 ' + str(
+                    page_filter) + ' 无数据</p>\';'
+                self.web_view.page().runJavaScript(js_code)
                 return
-        else:  # page_filter为0，使用全局数据
+        else:
             source_df = df.copy()
 
-        # --- 2. 数据预处理 (现在基于 source_df) ---
-        if config['x_var'] == '动作类型数量' or config['y_var'] == '动作类型数量':
+        # 数据预处理
+        x_var, y_var = config['x_var'], config['y_var']
+        if x_var == '动作类型数量' or y_var == '动作类型数量':
             data_to_plot = source_df['ActionType'].value_counts().reset_index()
             data_to_plot.columns = ['ActionType', 'Count']
-            if config['x_var'] == '动作类型数量':
-                x_var, y_var = 'ActionType', 'Count'
-            else:
-                x_var = config['x_var']
-                y_var = 'Count'
-                if source_df[x_var].dtype == 'object' or source_df[x_var].nunique() > 20:
-                    data_to_plot = source_df.groupby(x_var).size().reset_index(name='Count')
-                else:
-                    data_to_plot = source_df[[x_var]].copy();
-                    data_to_plot['Count'] = 1
+            x_var, y_var = ('ActionType', 'Count') if x_var == '动作类型数量' else (x_var, 'Count')
         else:
             data_to_plot = source_df
-            x_var, y_var = config['x_var'], config['y_var']
 
-        # --- 3. 绘图 (现在基于处理后的数据) ---
-        num_charts = len(active_charts)
-        for i, chart_type in enumerate(active_charts):
-            ax = self.figure.add_subplot(1, num_charts, i + 1)
-            ax.set_facecolor('#3C3C3C')
+        # 准备传递给JS的数据负载 (payload)
+        self.current_chart_types = [k for k, v in config['types'].items() if v]
 
-            try:
-                title_suffix = f" (第{page_filter}页)" if page_filter > 0 else " (全局)"
-                if chart_type == 'bar':
-                    data_to_plot.plot(kind='bar', x=x_var, y=y_var, ax=ax, legend=False)
-                    ax.set_title("条形图" + title_suffix)
-                elif chart_type == 'scatter':
-                    data_to_plot.plot(kind='scatter', x=x_var, y=y_var, ax=ax)
-                    ax.set_title("散点图" + title_suffix)
-                elif chart_type == 'line':
-                    if pd.api.types.is_numeric_dtype(data_to_plot[x_var]):
-                        data_to_plot.sort_values(by=x_var).plot(kind='line', x=x_var, y=y_var, ax=ax, legend=False)
-                    else:
-                        data_to_plot.plot(kind='line', x=x_var, y=y_var, ax=ax, legend=False)
-                    ax.set_title("折线图" + title_suffix)
+        # 将Pandas Series转换为Python list
+        x_data = data_to_plot[x_var].tolist()
+        y_data = data_to_plot[y_var].tolist()
 
-                ax.set_xlabel(x_var);
-                ax.set_ylabel(y_var)
-                ax.grid(True, linestyle='--', alpha=0.6)
-                # 自动旋转x轴标签以防重叠
-                self.figure.autofmt_xdate(rotation=45)
+        payload = {
+            "active_charts": self.current_chart_types,
+            "title": {
+                "text": f"{y_var} vs {x_var}",
+                "subtext": f"数据来源: {'全局' if page_filter == 0 else f'第 {page_filter} 页'}"
+            },
+            "data": {
+                "x_var": x_var,
+                "y_var": y_var,
+                "x_data": x_data,
+                "y_data": y_data,
+            }
+        }
 
-            except Exception as e:
-                ax.text(0.5, 0.5, f"无法绘制图表:\n{e}", ha='center', va='center', color='red')
+        # 将Python字典序列化为JSON字符串
+        json_data = json.dumps(payload)
 
-        self.figure.tight_layout(pad=3.0)
-        self.figure.patch.set_facecolor('#2E2E2E')
-        self.canvas.draw()
+        # 调用JS函数
+        self.web_view.page().runJavaScript(f"updateCharts('{json_data}');")
+
+    def export_chart(self, save_format):
+        """
+        调用JS获取图表的Base64数据，并保存为文件。
+        """
+        if not self.current_chart_types:
+            QMessageBox.warning(self, "无图表", "没有可导出的图表。")
+            return
+
+        # ECharts目前主要导出PNG，SVG需要额外配置
+        if save_format != 'png':
+            QMessageBox.information(self, "格式提示", "ECharts当前配置主要支持导出为PNG格式。")
+            save_format = 'png'
+
+        # 简单起见，我们只导出一个图表（例如第一个）
+        # 也可以修改JS和这里，将所有图表拼接成一张大图
+        chart_to_export = self.current_chart_types[0]
+
+        file_path, _ = QFileDialog.getSaveFileName(self, f"导出{chart_to_export}图表", "", f"PNG Files (*.png)")
+        if file_path:
+            # 定义一个Python槽函数来接收从JS返回的数据
+            @pyqtSlot(str)
+            def save_image_callback(base64_data):
+                try:
+                    # ECharts返回的base64字符串带有前缀，需要去掉
+                    # e.g., "data:image/png;base64,iVBORw0KGgo..."
+                    header, encoded = base64_data.split(",", 1)
+                    data = base64.b64decode(encoded)
+                    with open(file_path, "wb") as f:
+                        f.write(data)
+                    QMessageBox.information(self, "导出成功", f"图表已成功导出到:\n{file_path}")
+                except Exception as e:
+                    QMessageBox.critical(self, "导出失败", f"保存图片时发生错误:\n{e}")
+
+            # 调用JS函数，并将Python槽函数作为回调
+            self.web_view.page().runJavaScript(f"getChartBase64('{chart_to_export}');", save_image_callback)
