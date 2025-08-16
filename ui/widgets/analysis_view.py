@@ -2,14 +2,18 @@
 import os
 import json
 import base64
+import pandas as pd
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QMessageBox, QFileDialog
 from PyQt6.QtWebEngineWidgets import QWebEngineView
-from PyQt6.QtCore import QUrl, pyqtSlot
+from PyQt6.QtCore import QUrl, pyqtSlot, QTimer, pyqtSignal
 from PyQt6.QtGui import QColor  # <-- 确保导入QColor
 from core.analysis_utils import process_module_analysis, process_interpage_analysis
 
 
 class AnalysisView(QWidget):
+    progress_updated = pyqtSignal(int)
+    playback_finished = pyqtSignal()
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.layout = QVBoxLayout(self)
@@ -23,6 +27,19 @@ class AnalysisView(QWidget):
 
         self.full_df = None
         self.slide_images = None
+
+        # --- 播放器状态 ---
+        self.playback_timer = QTimer(self);
+        self.playback_timer.timeout.connect(self.update_playback_frame)
+        self.is_playing = False
+        self.current_playback_df = None  # 当前播放范围的数据
+        self.current_frame_index = 0
+        self.playback_mode = 'speed'
+        self.playback_speed = 1.0
+        self.fixed_interval = 3.0
+        self.current_page = 0  # 0 for global
+
+        self.playback_finished.connect(self._on_playback_finished)
 
     def _call_js_with_payload(self, function_name, payload):
         """
@@ -43,7 +60,48 @@ class AnalysisView(QWidget):
         self.full_df = df
         self.slide_images = slide_images
 
-    def run_analysis(self, config):
+    # def run_analysis(self, config):
+    #     if self.full_df is None or self.full_df.empty:
+    #         QMessageBox.warning(self, "无数据", "请先加载CSV数据。")
+    #         return
+    #
+    #     payload = {}
+    #     if config['module_on']:
+    #         page_num = config['page_num']
+    #         bg_url = ""
+    #
+    #         if page_num > 0:
+    #             if not self.slide_images or not (0 < page_num <= len(self.slide_images)):
+    #                 # 即使没有背景图，也应该继续分析，只是不显示背景
+    #                 if not self.slide_images:
+    #                     print("警告: 未加载PPT，无法显示背景。")
+    #                 else:
+    #                     print(f"警告: 页码 {page_num} 无效，无法显示背景。")
+    #             else:
+    #                 bg_path = self.slide_images[page_num - 1]
+    #                 bg_url = QUrl.fromLocalFile(os.path.abspath(bg_path)).toString()
+    #
+    #         payload['mode'] = 'module'
+    #         payload['page_bg_url'] = bg_url
+    #         payload['data'] = process_module_analysis(
+    #             self.full_df, page_num, config['eps'],
+    #             config['min_samples'], config['strength_threshold']
+    #         )
+    #
+    #
+    #     elif config['interpage_on']:
+    #         # --- 核心修改：简化调用流程 ---
+    #         # 直接将原始DataFrame传递给新的分析函数
+    #         payload['mode'] = 'interpage'
+    #         payload['data'] = process_interpage_analysis(self.full_df)
+    #         # (歧线/关联的开关逻辑保持不变)
+    #         if not config['show_divergence'] and not config['show_association']:
+    #             payload['data']['transitions'] = []
+    #     else:
+    #         self._call_js_with_payload("updateAnalysis", {}); return
+    #     self._call_js_with_payload("updateAnalysis", payload)
+    def run_static_analysis(self, config):
+        self.stop_playback() # 生成静态图时停止播放
         if self.full_df is None or self.full_df.empty:
             QMessageBox.warning(self, "无数据", "请先加载CSV数据。")
             return
@@ -83,6 +141,65 @@ class AnalysisView(QWidget):
         else:
             self._call_js_with_payload("updateAnalysis", {}); return
         self._call_js_with_payload("updateAnalysis", payload)
+
+    # --- 新的播放器逻辑 ---
+    def set_playback_page(self, page_num):
+        self.stop_playback()
+        self.current_page = page_num
+        if self.full_df is None: return
+
+        if page_num == 0:  # 全局
+            self.current_playback_df = self.full_df
+        else:
+            self.current_playback_df = self.full_df[self.full_df['SlideIndex'] == page_num]
+
+        self.current_playback_df = self.current_playback_df.reset_index(drop=True)
+        self.progress_updated.emit(0)
+
+        # 触发一次重绘，显示静态模块
+        # self.run_static_analysis(...)
+
+    def toggle_playback(self, play):
+        if self.current_playback_df is None or self.current_playback_df.empty: return
+        self.is_playing = play
+        if play:
+            if self.current_frame_index >= len(self.current_playback_df) - 1:
+                self.current_frame_index = 0  # 如果在末尾，则重头开始
+            self.update_playback_frame()
+        else:
+            self.playback_timer.stop()
+
+    def update_playback_frame(self):
+        if not self.is_playing or self.current_frame_index >= len(self.current_playback_df) - 1:
+            self.playback_finished.emit();
+            return
+
+        self.current_frame_index += 1
+        self.progress_updated.emit(self.current_frame_index)
+
+        # TODO: 调用JS来绘制动态轨迹
+        # self._call_js_with_payload("drawDynamicTrajectory", {...})
+
+        if self.playback_mode == 'speed':
+            # ... (计算时间差的逻辑) ...
+            self.playback_timer.start(100)  # 简化为固定间隔
+        else:
+            self.playback_timer.start(int(self.fixed_interval * 1000))
+
+    def _on_playback_finished(self):
+        self.is_playing = False;
+        self.playback_timer.stop()
+
+    def scrub_to_position(self, frame_index):
+        self.stop_playback()
+        self.current_frame_index = frame_index
+        self.progress_updated.emit(frame_index)
+        # TODO: 触发一次重绘
+
+    def stop_playback(self):
+        self.is_playing = False;
+        self.playback_timer.stop()
+        self.playback_finished.emit()  # 通知UI更新按钮状态
 
     # --- 更新 handle_style_change 以使用新辅助函数 ---
     def handle_style_change(self, start_color: QColor, end_color: QColor, link_color: QColor):
@@ -132,3 +249,19 @@ class AnalysisView(QWidget):
         # 调用JS函数，并将我们的Python槽函数作为回调传递
         # 注意：JS函数 getChartBase64 需要在 analysis_view.js 中定义
         self.web_view.page().runJavaScript(f"getChartBase64('{save_format}');", save_image_from_base64)
+
+    # --- 新增：专门用于接收信号的槽方法 ---
+    def set_playback_mode(self, mode: str):
+        """设置播放模式（'speed' 或 'interval'）。"""
+        self.playback_mode = mode
+        print(f"AnalysisView playback mode set to: {self.playback_mode}")  # 添加调试信息
+
+    def set_speed(self, speed: float):
+        """设置播放速度。"""
+        self.playback_speed = speed
+        print(f"AnalysisView speed set to: {self.playback_speed}")
+
+    def set_interval(self, interval: float):
+        """设置等距播放的间隔。"""
+        self.fixed_interval = interval
+        print(f"AnalysisView interval set to: {self.fixed_interval}")
