@@ -319,21 +319,18 @@ class MainWindow(QMainWindow):
         self.chart_controls.generate_chart_signal.connect(self.generate_chart)
         self.chart_controls.export_chart_button.clicked.connect(self.export_chart)
 
-        # --- 在分析功能的连接部分 ---
-        # self.analysis_controls.analysis_requested.connect(self.run_analysis)
-        # self.analysis_controls.export_csv_requested.connect(self.export_analysis_csv)
-        # self.analysis_controls.module_style_requested.connect(self.prompt_for_module_style)
-        # self.analysis_controls.interpage_style_requested.connect(self.prompt_for_interpage_style)
-        # self.analysis_controls.export_chart_requested.connect(self.export_analysis_chart)
         # --- 分析功能连接 ---
         ac = self.analysis_controls
         av = self.analysis_view
-
-        ac.analysis_requested.connect(av.run_static_analysis)  # 重命名
-        ac.export_csv_requested.connect(self.export_analysis_csv)
+        # 静态分析
+        ac.analysis_requested.connect(av.run_static_analysis)
+        # 样式
         ac.module_style_requested.connect(self.prompt_for_module_style)
         ac.interpage_style_requested.connect(self.prompt_for_interpage_style)
+        # 导出
+        ac.export_csv_requested.connect(self.export_analysis_csv)
         ac.export_chart_requested.connect(self.export_analysis_chart)
+
         # --- 连接新的播放信号 ---
         ac.play_toggled.connect(av.toggle_playback)
         ac.progress_scrubbed.connect(av.scrub_to_position)
@@ -343,7 +340,7 @@ class MainWindow(QMainWindow):
         ac.page_changed.connect(av.set_playback_page)
 
         # 反馈信号
-        av.progress_updated.connect(ac.update_progress)
+        av.progress_updated.connect(self._handle_analysis_progress)
         av.playback_finished.connect(lambda: ac.play_button.setChecked(False))
 
         # --- 演示播放功能信号连接 (重构版) ---
@@ -505,6 +502,14 @@ class MainWindow(QMainWindow):
             )
 
     # --- 新增槽函数 ---
+    def _handle_analysis_progress(self, value):
+        # progress_updated信号现在会发射两个值：先是最大值，然后是当前值
+        # 这是一个小技巧，用于更新进度条的范围和值
+        if value > self.analysis_controls.progress_slider.maximum():
+            self.analysis_controls.set_progress_range(value)
+        else:
+            self.analysis_controls.update_progress(value)
+
     def prompt_for_interpage_style(self):
         # 复用ColorSettingsDialog
         dialog = ColorSettingsDialog(

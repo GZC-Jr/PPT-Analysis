@@ -18,14 +18,15 @@ let currentInterpageStyle = {
     startColor: '#50a3ba', // Default start color for heatmap gradient (weak)
     endColor: '#d94e5d'   // Default end color for heatmap gradient (strong)
 };
+let currentStyle = { /* ... */ }; // (保持不变)
 
 /**
  * Main update function, called directly from Python.
  * It receives a pre-parsed JavaScript object as its configuration.
  * @param {object} config - The configuration object from Python, containing mode, data, and settings.
  */
-function updateAnalysis(config) {
-    console.log("Received config object from Python:", config);
+// function updateAnalysis(config) {
+    console.log("Static analysis update:", config);
 
     try {
         const container = document.getElementById('analysis-container');
@@ -65,6 +66,31 @@ function updateAnalysis(config) {
         const container = document.getElementById('analysis-container');
         container.innerHTML = `<p style="color: red; font-family: sans-serif; text-align:center;">前端渲染错误！<br>请在浏览器中打开 http://localhost:8888 检查开发者控制台获取详情。</p>`;
     }
+// }
+/**
+ * 主更新函数，现在只负责绘制静态图表。
+ */
+function updateAnalysis(config) {
+    console.log("Static analysis update:", config);
+    try {
+        const container = document.getElementById('analysis-container');
+        if (config.page_bg_url) {
+            container.style.backgroundImage = `url('${config.page_bg_url}')`;
+            container.style.backgroundSize = 'contain';
+            container.style.backgroundRepeat = 'no-repeat';
+            container.style.backgroundPosition = 'center';
+        } else {
+            container.style.backgroundImage = 'none';
+        }
+        if (analysisChart) { analysisChart.dispose(); }
+        analysisChart = echarts.init(container, 'dark');
+
+        if (config.mode === 'module') {
+            renderModuleGraph(config.data);
+        } else if (config.mode === 'interpage') {
+            renderInterpageHeatmap(config.data);
+        } // ... (其他模式)
+    } catch (e) { console.error("JS Error:", e); }
 }
 
 /**
@@ -117,6 +143,78 @@ function renderModuleGraph(data) {
     };
     analysisChart.setOption(currentOption);
 }
+
+/**
+ * --- 新增：专门用于绘制动态轨迹的函数 ---
+ * 这个函数不会重置整个图表，只会在现有图表上更新或添加一个'lines'系列。
+ */
+function drawDynamicTrajectory(trajectoryData) {
+    if (!analysisChart || !currentOption) return;
+
+    // 找到或创建一个用于轨迹的series
+    let series = analysisChart.getOption().series;
+    let trajectorySeriesIndex = -1;
+    for (let i = 0; i < series.length; i++) {
+        if (series[i].name === 'dynamicTrajectory') {
+            trajectorySeriesIndex = i;
+            break;
+        }
+    }
+
+    // 构建轨迹线的坐标点
+    const points = trajectoryData.points.map(p => [p.X, p.Y]);
+    
+    // 构建ECharts的lines系列配置
+    const trajectoryOption = {
+        name: 'dynamicTrajectory',
+        type: 'lines',
+        coordinateSystem: 'cartesian2d',
+        zlevel: 10, // 确保轨迹线在最上层
+        effect: {
+            show: true,
+            period: 4,
+            trailLength: 0.1,
+            symbol: 'circle',
+            symbolSize: 8,
+            color: '#fff'
+        },
+        lineStyle: {
+            color: '#ff0000',
+            width: 2,
+            opacity: 0.8,
+            curveness: 0.1
+        },
+        data: [{
+            coords: points
+        }]
+    };
+
+    if (trajectorySeriesIndex === -1) {
+        // 如果是第一次绘制，添加新的series
+        currentOption.series.push(trajectoryOption);
+    } else {
+        // 否则，只更新数据
+        currentOption.series[trajectorySeriesIndex] = trajectoryOption;
+    }
+    
+    // 使用新的option更新图表
+    analysisChart.setOption(currentOption, { notMerge: false });
+}
+
+/**
+ * --- 新增：清除动态轨迹的函数 ---
+ */
+function clearDynamicTrajectory() {
+    if (!analysisChart || !currentOption) return;
+    
+    // 过滤掉名为'dynamicTrajectory'的series
+    currentOption.series = currentOption.series.filter(s => s.name !== 'dynamicTrajectory');
+    
+    // 重新设置option，这次使用 notMerge: true 来确保旧的轨迹被移除
+    analysisChart.setOption(currentOption, { notMerge: true });
+}
+
+
 
 /**
  * Renders the Interpage Relationship Heatmap (Calendar View).
