@@ -319,29 +319,19 @@ class MainWindow(QMainWindow):
         self.chart_controls.generate_chart_signal.connect(self.generate_chart)
         self.chart_controls.export_chart_button.clicked.connect(self.export_chart)
 
-        # --- 分析功能连接 ---
+        # --- 分析功能连接 (简化版) ---
         ac = self.analysis_controls
         av = self.analysis_view
-        # 静态分析
+
         ac.analysis_requested.connect(av.run_static_analysis)
-        # 样式
+        ac.export_csv_requested.connect(self.export_analysis_csv)
         ac.module_style_requested.connect(self.prompt_for_module_style)
         ac.interpage_style_requested.connect(self.prompt_for_interpage_style)
-        # 导出
-        ac.export_csv_requested.connect(self.export_analysis_csv)
         ac.export_chart_requested.connect(self.export_analysis_chart)
 
-        # --- 连接新的播放信号 ---
-        ac.play_toggled.connect(av.toggle_playback)
-        ac.progress_scrubbed.connect(av.scrub_to_position)
-        ac.playback_mode_changed.connect(av.set_playback_mode)
-        ac.speed_changed.connect(av.set_speed)
-        ac.interval_changed.connect(av.set_interval)
-        ac.page_changed.connect(av.set_playback_page)
-
-        # 反馈信号
-        av.progress_updated.connect(self._handle_analysis_progress)
-        av.playback_finished.connect(lambda: ac.play_button.setChecked(False))
+        # 将页面切换信号连接到AnalysisView，以便它知道当前页
+        # 但实际的图表重新生成由controls内部触发
+        ac.page_changed.connect(av.set_current_page)
 
         # --- 演示播放功能信号连接 (重构版) ---
         pc = self.presentation_controls
@@ -367,11 +357,14 @@ class MainWindow(QMainWindow):
 
     def on_ppt_loaded(self, slide_paths):
         self.presentation_view.set_slides(slide_paths)
-        self.analysis_view.set_data(self.data_model.get_dataframe(), slide_paths)
+        self._update_max_page()
+        df = self.data_model.get_dataframe()
+        self.analysis_view.set_data(df, self.data_model.slide_images)
 
     def on_data_loaded(self):
         """当CSV数据加载或更新时调用"""
         df = self.data_model.get_dataframe()
+        self._update_max_page()
         self.analysis_view.set_data(df, self.data_model.slide_images)
         # --- 使用新的restore_data方法来刷新 ---
         self.table_view.restore_data(df)
@@ -401,7 +394,18 @@ class MainWindow(QMainWindow):
         if file_path:
             self.data_model.load_csv(file_path)
 
-        # --- 新增或修改的槽函数 ---
+    def _update_max_page(self):
+        """计算PPT和CSV中的最大页数，并更新UI控件。"""
+        ppt_pages = len(self.data_model.slide_images)
+        csv_pages = 0
+        df = self.data_model.get_dataframe()
+        if df is not None and not df.empty and 'SlideIndex' in df.columns:
+            csv_pages = df['SlideIndex'].max()
+
+        max_page = max(ppt_pages, csv_pages)
+
+        # 将最大值传递给AnalysisControls
+        self.analysis_controls.set_max_page(max_page)
 
     def find_in_table(self, backward=False):
         find_text = self.table_controls.find_edit.text()
